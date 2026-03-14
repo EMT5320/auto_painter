@@ -133,9 +133,9 @@ class AutoPainterApp(ctk.CTk):
         self.drop_label.bind("<Button-1>", lambda e: self._browse_image())
         drop_frame.bind("<Button-1>", lambda e: self._browse_image())
 
-        # 注册文件拖入
+        # 注册文件拖入，强制使用 Unicode 路径，避免 Windows ANSI/bytes 路径解析问题
         if HAS_DND:
-            windnd.hook_dropfiles(self, func=self._on_image_drop)
+            windnd.hook_dropfiles(self, func=self._on_image_drop, force_unicode=True)
 
         # 文件信息
         self.file_label = ctk.CTkLabel(
@@ -374,21 +374,36 @@ class AutoPainterApp(ctk.CTk):
         if not files:
             return
         raw = files[0]
-        try:
-            path = raw.decode("utf-8")
-        except (UnicodeDecodeError, AttributeError):
-            try:
-                path = raw.decode("gbk")
-            except Exception:
+
+        if isinstance(raw, bytes):
+            raw = raw.replace(b'\x00', b'')
+            for enc in ("utf-8", "gbk"):
+                try:
+                    path = raw.decode(enc)
+                    break
+                except (UnicodeDecodeError, AttributeError):
+                    continue
+            else:
                 path = str(raw)
+        else:
+            path = str(raw)
+
+        path = path.replace("\x00", "").strip()
+        if path.startswith("{") and path.endswith("}"):
+            path = path[1:-1]
+        path = os.path.normpath(path.strip().strip('"').strip())
+
         ext = os.path.splitext(path)[1].lower()
         if ext in (".jpg", ".jpeg", ".png", ".bmp"):
             self._set_image(path)
             self.tabview.set("🖼 图片模式")
         else:
-            self.log(f"⚠ 不支持的文件格式: {ext}")
+            self.log(f"⚠ 不支持的文件格式: {ext}  路径: {path}")
 
     def _set_image(self, path):
+        if not os.path.exists(path):
+            self.log(f"❌ 文件不存在: {path}")
+            return
         self.image_path = path
         name = os.path.basename(path)
         self.file_label.configure(text=f"📄 {name}", text_color="#cccccc")
