@@ -13,13 +13,25 @@ pyautogui.FAIL_SAFE = True   # 鼠标移到左上角紧急停止
 pyautogui.PAUSE = 0          # 关闭默认的0.1s全局暂停（这是速度慢的主要原因）
 
 
-def countdown(seconds: int = 5):
-    """倒计时，给用户时间切换到游戏窗口"""
-    print(f"\n⏳ 请在 {seconds} 秒内切换到游戏窗口...")
+def countdown(seconds: int = 5, callback=None, stop_event=None):
+    """倒计时，给用户时间切换到游戏窗口
+    :param callback: 可选，callable(remaining_seconds) 用于GUI更新
+    :param stop_event: 可选，threading.Event 用于中断
+    :return: True=正常完成, False=被中断
+    """
+    if callback is None:
+        print(f"\n⏳ 请在 {seconds} 秒内切换到游戏窗口...")
     for i in range(seconds, 0, -1):
-        print(f"   {i}...", end="\r", flush=True)
+        if stop_event and stop_event.is_set():
+            return False
+        if callback:
+            callback(i)
+        else:
+            print(f"   {i}...", end="\r", flush=True)
         time.sleep(1)
-    print("🎨 开始绘制！                    ")
+    if callback is None:
+        print("🎨 开始绘制！                    ")
+    return True
 
 
 def interpolate_points(p1, p2, step=4):
@@ -42,13 +54,16 @@ def _safe_point(x, y, margin=5):
     return margin < x < sw - margin and margin < y < sh - margin
 
 
-def draw_strokes(strokes: list, move_speed: float = 0.0005, lift_speed: float = 0.001, button: str = 'right'):
+def draw_strokes(strokes: list, move_speed: float = 0.0005, lift_speed: float = 0.001,
+                 button: str = 'right', progress_callback=None, stop_event=None):
     """
     执行绘制
     :param strokes: [ [(x,y), ...], [(x,y), ...], ... ] 每个子列表是一段连续笔画
     :param move_speed: 绘制时每步停留秒数（越小越快）
     :param lift_speed: 抬笔移动时每步停留秒数
     :param button: 绘制用的鼠标键，'right' 或 'left'
+    :param progress_callback: 可选，callable(current, total) 用于GUI进度更新
+    :param stop_event: 可选，threading.Event 用于中断绘制
     """
     if not strokes:
         print("⚠ 没有可绘制的路径")
@@ -60,12 +75,19 @@ def draw_strokes(strokes: list, move_speed: float = 0.0005, lift_speed: float = 
     current_pos = None
 
     for i, stroke in enumerate(strokes):
+        if stop_event and stop_event.is_set():
+            pyautogui.mouseUp(button=button)
+            return
+
         if not stroke:
             continue
 
         # 显示进度
-        pct = (i + 1) / total_strokes * 100
-        print(f"   进度: {pct:.1f}%  ({i+1}/{total_strokes})", end="\r", flush=True)
+        if progress_callback:
+            progress_callback(i + 1, total_strokes)
+        else:
+            pct = (i + 1) / total_strokes * 100
+            print(f"   进度: {pct:.1f}%  ({i+1}/{total_strokes})", end="\r", flush=True)
 
         start = stroke[0]
 
