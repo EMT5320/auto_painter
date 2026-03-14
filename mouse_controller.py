@@ -22,7 +22,7 @@ def countdown(seconds: int = 5):
     print("🎨 开始绘制！                    ")
 
 
-def interpolate_points(p1, p2, step=8):
+def interpolate_points(p1, p2, step=4):
     """
     在两点之间插值，确保鼠标移动连贯
     step: 每隔多少像素取一个点（越大点越少越快）
@@ -92,7 +92,7 @@ def draw_strokes(strokes: list, move_speed: float = 0.0005, lift_speed: float = 
 
         # 沿笔画路径移动
         for j in range(1, len(stroke)):
-            seg = interpolate_points(stroke[j-1], stroke[j], step=8)
+            seg = interpolate_points(stroke[j-1], stroke[j], step=4)
             for pt in seg:
                 pyautogui.moveTo(pt[0], pt[1])
                 time.sleep(move_speed)

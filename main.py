@@ -51,12 +51,12 @@ def ask_countdown():
 
 def ask_canvas_ratio():
     """询问画布比例"""
-    val = input("📐 画布占屏幕比例(50-70%)？[默认60]: ").strip()
+    val = input("📐 画布占屏幕比例(50-95%)？[默认80]: ").strip()
     try:
         r = int(val)
-        return max(50, min(70, r)) / 100
+        return max(50, min(95, r)) / 100
     except ValueError:
-        return 0.6
+        return 0.8
 
 
 def ask_button():
@@ -91,7 +91,7 @@ def mode_image():
                                  canny_low=canny_low, canny_high=canny_high)
 
     print("⚙  优化路径中...")
-    strokes = optimize_strokes(raw_contours, min_dist=2.0)
+    strokes = optimize_strokes(raw_contours, min_dist=1.0)
     print(f"✅ 优化后共 {len(strokes)} 段笔画")
 
     countdown(wait)

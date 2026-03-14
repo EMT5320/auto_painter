@@ -39,8 +39,8 @@ def _image_to_contours(img_gray: np.ndarray,
     # Canny边缘检测
     edges = cv2.Canny(blurred, canny_low, canny_high)
 
-    # 提取轮廓
-    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_TC89_L1)
+    # 提取轮廓（保留完整线段端点，不做曲线近似）
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
     result = []
     for cnt in contours:
@@ -76,13 +76,16 @@ def process_image(image_path: str,
     """
     canvas_w, canvas_h, offset_x, offset_y = get_canvas_size(canvas_ratio)
 
-    # 读取并缩放图片
+    # 读取并缩放图片（始终缩放到填满画布，小图也会放大）
     img = Image.open(image_path).convert("RGB")
-    img.thumbnail((canvas_w, canvas_h), Image.LANCZOS)
+    scale = min(canvas_w / img.width, canvas_h / img.height)
+    new_w = int(img.width * scale)
+    new_h = int(img.height * scale)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
 
-    # 居中放置：如果图片比画布小，计算额外偏移
-    extra_x = (canvas_w - img.width) // 2
-    extra_y = (canvas_h - img.height) // 2
+    # 居中放置
+    extra_x = (canvas_w - new_w) // 2
+    extra_y = (canvas_h - new_h) // 2
 
     # 转为灰度 numpy 数组
     img_gray = np.array(img.convert("L"))
@@ -162,19 +165,23 @@ def process_text(text: str,
 
     print(f"📝 文字尺寸: {text_w}x{text_h}  字号: {font_size}")
 
-    # 渲染白色文字到黑色背景
-    img = Image.new("L", (text_w + 10, text_h + 10), color=0)
+    # 渲染白色文字到黑色背景（充足边距防止 Canny 在边界丢失轮廓）
+    margin = 30
+    img_w = text_w + 2 * margin
+    img_h = text_h + 2 * margin
+    img = Image.new("L", (img_w, img_h), color=0)
     d = ImageDraw.Draw(img)
-    d.text((5, 5), text, fill=255, font=font)
+    # 补偿 bbox 偏移，确保文字精确放置在 margin 位置
+    d.text((margin - bbox[0], margin - bbox[1]), text, fill=255, font=font)
 
     img_array = np.array(img)
 
     contours = _image_to_contours(img_array, canny_low, canny_high)
     print(f"🔍 检测到 {len(contours)} 段轮廓")
 
-    # 居中偏移
-    extra_x = (canvas_w - text_w) // 2
-    extra_y = (canvas_h - text_h) // 2
+    # 居中偏移（基于完整图像尺寸）
+    extra_x = (canvas_w - img_w) // 2
+    extra_y = (canvas_h - img_h) // 2
     final_ox = offset_x + extra_x
     final_oy = offset_y + extra_y
 
