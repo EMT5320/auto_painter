@@ -1,13 +1,10 @@
 """
-image_processor.py
-图像/文字处理模块
-将图片或文字转换为可绘制的轮廓路径（屏幕坐标）
+image_processor.py  —  向后兼容存根
+已迁移至 features/painter/processor.py，此文件仅作转发
 """
+from features.painter.processor import *  # noqa: F401, F403
+from features.painter.processor import get_canvas_size, process_image, process_text
 
-import cv2
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-import pyautogui
 
 
 def get_canvas_size(ratio: float = 0.6):

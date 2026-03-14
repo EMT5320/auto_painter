@@ -1,12 +1,10 @@
 """
-mouse_controller.py
-鼠标绘制执行模块
-按住右键沿路径移动，模拟游戏内绘画
+mouse_controller.py  —  向后兼容存根
+已迁移至 core/mouse.py，此文件仅作转发
 """
+from core.mouse import *  # noqa: F401, F403
+from core.mouse import countdown, interpolate_points, draw_strokes
 
-import time
-import pyautogui
-import numpy as np
 
 # 全局安全设置
 pyautogui.FAIL_SAFE = True   # 鼠标移到左上角紧急停止

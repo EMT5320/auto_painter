@@ -17,9 +17,9 @@ import pyautogui
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont
 
-from image_processor import process_image, process_text
-from path_optimizer import optimize_strokes
-from mouse_controller import draw_strokes
+from features.painter.processor import process_image, process_text
+from core.path_opt import optimize_strokes
+from core.mouse import draw_strokes
 
 # 可选：Windows 文件拖入支持
 try:
@@ -43,9 +43,9 @@ class AutoPainterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Auto Painter — 杀戮尖塔2 自动绘画")
-        self.geometry("920x720")
-        self.minsize(850, 650)
+        self.title("STS2 Game Assistant — 杀戮尖塔2 游戏助手")
+        self.geometry("960x740")
+        self.minsize(880, 660)
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
         ctk.set_appearance_mode("dark")
@@ -59,9 +59,11 @@ class AutoPainterApp(ctk.CTk):
         self.is_drawing = False
         self._preview_photo = None  # 防止 GC 回收
         self._thumb_photo = None
+        self._route_screenshot = None   # 路线规划：当前截图
+        self._route_preview_photo = None
 
         self._build_ui()
-        self.log("就绪。选择图片或输入文字，然后点击「预览效果」。")
+        self.log("就绪。选择绘画功能或路线规划功能开始使用。")
 
     # ═══════════════════════════════════════════
     #  UI 构建
@@ -75,24 +77,30 @@ class AutoPainterApp(ctk.CTk):
         title_frame = ctk.CTkFrame(self, corner_radius=8)
         title_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
         ctk.CTkLabel(
-            title_frame, text="🎨 Auto Painter",
+            title_frame, text="⚔ STS2 Assistant",
             font=ctk.CTkFont(size=22, weight="bold")
         ).pack(side="left", padx=15, pady=8)
         ctk.CTkLabel(
             title_frame,
-            text="杀戮尖塔2 地图绘画工具  ·  ⚡ 鼠标移到左上角紧急停止",
+            text="杀戮尖塔2 游戏助手  ·  ⚡ 鼠标移到左上角紧急停止",
             font=ctk.CTkFont(size=12), text_color="#aaaaaa"
         ).pack(side="left", padx=10)
 
-        # ── 主内容区（两列） ──
-        content = ctk.CTkFrame(self, fg_color="transparent")
-        content.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
-        content.grid_columnconfigure(0, weight=0, minsize=380)
-        content.grid_columnconfigure(1, weight=1, minsize=440)
-        content.grid_rowconfigure(0, weight=1)
+        # ── 功能标签页 ──
+        self.feature_tabs = ctk.CTkTabview(self, corner_radius=8)
+        self.feature_tabs.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
 
-        self._build_left_panel(content)
-        self._build_right_panel(content)
+        # 绘画标签页
+        paint_tab = self.feature_tabs.add("🎨 绘画")
+        paint_tab.grid_columnconfigure(0, weight=0, minsize=380)
+        paint_tab.grid_columnconfigure(1, weight=1, minsize=440)
+        paint_tab.grid_rowconfigure(0, weight=1)
+        self._build_left_panel(paint_tab)
+        self._build_right_panel(paint_tab)
+
+        # 路线规划标签页
+        route_tab = self.feature_tabs.add("🗺 路线规划")
+        self._build_route_panel(route_tab)
 
         # ── 底部控制区 ──
         self._build_bottom()
@@ -307,6 +315,180 @@ class AutoPainterApp(ctk.CTk):
             btn_frame, text="左键", variable=self.button_var,
             value="left", font=ctk.CTkFont(size=12)
         ).pack(side="left", padx=8)
+
+    # ═══════════════════════════════════════════
+    #  路线规划面板
+    # ═══════════════════════════════════════════
+
+    def _build_route_panel(self, parent):
+        """路线规划功能面板"""
+        parent.grid_columnconfigure(0, weight=1, minsize=360)
+        parent.grid_columnconfigure(1, weight=1, minsize=440)
+        parent.grid_rowconfigure(0, weight=1)
+
+        # ── 左侧：截图 + 节点偏好设置 ──
+        left = ctk.CTkFrame(parent, corner_radius=8)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 5), pady=0)
+        left.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            left, text="地图识别",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 5))
+
+        ctk.CTkButton(
+            left, text="📷 截取游戏地图", height=36,
+            font=ctk.CTkFont(size=13),
+            command=self._route_capture_map
+        ).grid(row=1, column=0, sticky="ew", padx=12, pady=5)
+
+        # ── 节点偏好设置 ──
+        pref_frame = ctk.CTkFrame(left, corner_radius=6)
+        pref_frame.grid(row=2, column=0, sticky="ew", padx=12, pady=(12, 5))
+        pref_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            pref_frame, text="路线偏好设置",
+            font=ctk.CTkFont(size=13, weight="bold")
+        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=10, pady=(8, 2))
+
+        ctk.CTkLabel(
+            pref_frame,
+            text="滑块：← 尽量少  ·  中立  ·  尽量多 →",
+            font=ctk.CTkFont(size=10), text_color="#888888"
+        ).grid(row=1, column=0, columnspan=3, sticky="w", padx=10, pady=(0, 6))
+
+        node_prefs = [
+            ("🔥 休息 (营火)", "rest"),
+            ("👹 精英",        "elite"),
+            ("🏪 商人",        "merchant"),
+            ("❓ 未知",        "unknown"),
+            ("🗝 宝箱",        "treasure"),
+            ("👾 敌人",        "monster"),
+        ]
+        self._route_weight_vars: dict[str, tk.IntVar] = {}
+        _slider_labels = ["最少", "较少", "中立", "较多", "最多"]
+
+        for row_i, (label, key) in enumerate(node_prefs, start=2):
+            ctk.CTkLabel(
+                pref_frame, text=label, font=ctk.CTkFont(size=12)
+            ).grid(row=row_i, column=0, sticky="w", padx=(10, 5), pady=3)
+
+            var = tk.IntVar(value=0)
+            self._route_weight_vars[key] = var
+
+            ctk.CTkSlider(
+                pref_frame, from_=-2, to=2, number_of_steps=4,
+                variable=var
+            ).grid(row=row_i, column=1, sticky="ew", padx=5, pady=3)
+
+            display = ctk.CTkLabel(
+                pref_frame, text="中立", width=42, font=ctk.CTkFont(size=11)
+            )
+            display.grid(row=row_i, column=2, padx=(0, 10), pady=3)
+
+            def _make_handler(v=var, d=display):
+                def _h(*_):
+                    idx = max(0, min(4, v.get() + 2))
+                    d.configure(text=_slider_labels[idx])
+                return _h
+            var.trace_add("write", _make_handler())
+
+        # ── 操作按钮 ──
+        ctk.CTkButton(
+            left, text="🔍 分析路线", height=36,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#2d5a9e", hover_color="#3a72c4",
+            command=self._route_analyze
+        ).grid(row=3, column=0, sticky="ew", padx=12, pady=(12, 5))
+
+        ctk.CTkButton(
+            left, text="🖊 绘制选中路线", height=36,
+            font=ctk.CTkFont(size=13),
+            fg_color="#2d7d2d", hover_color="#3a9a3a",
+            command=self._route_draw_selected
+        ).grid(row=4, column=0, sticky="ew", padx=12, pady=5)
+
+        ctk.CTkLabel(
+            left, text="⚠ Phase 1 开发中：请先提供节点模板图片",
+            text_color="#886600", font=ctk.CTkFont(size=10)
+        ).grid(row=5, column=0, padx=12, pady=(2, 12))
+
+        # ── 右侧：地图预览 + 路线方案列表 ──
+        right = ctk.CTkFrame(parent, corner_radius=8)
+        right.grid(row=0, column=1, sticky="nsew", padx=(5, 0), pady=0)
+        right.grid_columnconfigure(0, weight=1)
+        right.grid_rowconfigure(1, weight=2)
+        right.grid_rowconfigure(3, weight=1)
+
+        ctk.CTkLabel(
+            right, text="地图预览",
+            font=ctk.CTkFont(size=13, weight="bold")
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 2))
+
+        self.route_preview_label = ctk.CTkLabel(
+            right,
+            text="截取游戏地图后\n将在此处显示识别结果",
+            text_color="#666666", font=ctk.CTkFont(size=12),
+            corner_radius=6, fg_color="#1a1a1a"
+        )
+        self.route_preview_label.grid(row=1, column=0, sticky="nsew", padx=8, pady=(2, 8))
+
+        ctk.CTkLabel(
+            right, text="推荐路线",
+            font=ctk.CTkFont(size=13, weight="bold")
+        ).grid(row=2, column=0, sticky="w", padx=12, pady=(4, 2))
+
+        # 路线列表（CTkScrollableFrame 内放单选按钮）
+        self._route_list_frame = ctk.CTkScrollableFrame(right, height=120, corner_radius=6)
+        self._route_list_frame.grid(row=3, column=0, sticky="nsew", padx=8, pady=(2, 8))
+        self._route_list_frame.grid_columnconfigure(0, weight=1)
+        self._route_selected_var = tk.IntVar(value=-1)
+
+        ctk.CTkLabel(
+            self._route_list_frame,
+            text="点击「分析路线」后，推荐方案将在此处显示",
+            text_color="#666666", font=ctk.CTkFont(size=11)
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=8)
+
+    # ── 路线规划事件处理 ─────────────────────────────────────
+
+    def _route_capture_map(self):
+        """截取当前屏幕作为地图截图"""
+        self.log("📷 正在截取屏幕...")
+        import pyautogui
+        try:
+            self._route_screenshot = pyautogui.screenshot()
+            # 缩略图预览
+            thumb = self._route_screenshot.copy()
+            thumb.thumbnail((440, 300), 1)  # LANCZOS=1
+            from PIL import Image
+            self._route_preview_photo = ctk.CTkImage(
+                light_image=thumb, dark_image=thumb,
+                size=(thumb.width, thumb.height)
+            )
+            self.route_preview_label.configure(
+                image=self._route_preview_photo, text=""
+            )
+            self.log(f"✅ 截图完成：{self._route_screenshot.width}×{self._route_screenshot.height}")
+        except Exception as e:
+            self.log(f"❌ 截图失败：{e}")
+
+    def _route_analyze(self):
+        """分析地图路线（Phase 1 占位）"""
+        if self._route_screenshot is None:
+            self.log("⚠ 请先截取游戏地图")
+            return
+        self.log("🔍 正在分析地图路线...")
+        self.log("⚠ 节点识别功能开发中（Phase 1），需要先提供节点模板图片")
+        self.log("   模板图片存放位置：assets/node_templates/<类型>/*.png")
+        # TODO Phase 1: 调用 features.route_planner.recognize_map
+        # TODO Phase 2: 调用 build_map_graph + find_all_routes + rank_routes
+        # TODO Phase 2: 更新 _route_list_frame 显示推荐路线
+
+    def _route_draw_selected(self):
+        """绘制用户选定的路线（Phase 3 占位）"""
+        self.log("⚠ 路线绘制功能开发中（Phase 3），敬请期待～")
 
     def _build_bottom(self):
         bottom = ctk.CTkFrame(self)
@@ -524,6 +706,11 @@ class AutoPainterApp(ctk.CTk):
 
     def _start_drawing(self):
         if self.is_drawing:
+            return
+
+        # 路线规划标签页有独立的绘制入口
+        if self.feature_tabs.get() == "🗺 路线规划":
+            self._route_draw_selected()
             return
 
         tab = self.tabview.get()

@@ -1,10 +1,10 @@
 """
-path_optimizer.py
-路径优化模块
-对多段轮廓进行最近邻排序，减少抬笔移动距离
+path_optimizer.py  —  向后兼容存根
+已迁移至 core/path_opt.py，此文件仅作转发
 """
+from core.path_opt import *  # noqa: F401, F403
+from core.path_opt import nearest_neighbor_sort, thin_points, optimize_strokes
 
-import numpy as np
 
 
 def _contour_endpoints(contour):

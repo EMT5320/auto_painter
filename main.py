@@ -13,9 +13,9 @@ main.py
 import sys
 import os
 
-from image_processor import process_image, process_text
-from path_optimizer import optimize_strokes
-from mouse_controller import countdown, draw_strokes
+from features.painter.processor import process_image, process_text
+from core.path_opt import optimize_strokes
+from core.mouse import countdown, draw_strokes
 
 
 def print_banner():
