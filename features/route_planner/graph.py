@@ -70,23 +70,52 @@ def build_map_graph(
     从识别结果构建 MapGraph。
 
     :param nodes: 节点列表（来自 recognizer.recognize_map）
-    :param edges: 边列表，每项 (from_id, to_id)
+    :param edges: 边列表，每项 (from_id, to_id)，来自虚线检测
     :return: 构建好的 MapGraph
 
-    如果边列表为空（识别失败），会尝试通过层次关系自动推断连接：
-      同层相邻节点之间、不同层 X 坐标最近的节点对，视为相连。
+    STS2 地图中只有被虚线连接的节点才能互通，
+    边列表必须由虚线检测产生，不进行距离推断。
     """
     graph = MapGraph()
     graph.nodes = {n.node_id: n for n in nodes}
 
-    if edges:
-        for from_id, to_id in edges:
-            graph.adjacency[from_id].append(to_id)
-    else:
-        # 回退策略：通过层次 + X 坐标推断连接
-        _infer_edges_by_layer(graph)
+    for from_id, to_id in edges:
+        graph.adjacency[from_id].append(to_id)
 
+    mark_structural_nodes(graph)
     return graph
+
+
+def mark_structural_nodes(graph: MapGraph) -> None:
+    """
+    通过图拓扑结构推断并标记 START 和 BOSS 节点类型。
+
+    规则（不依赖模板匹配，能应对每局图标随机变化）：
+      - START：入度 = 0 且出度 > 0 的节点
+              「路线开始分叉处」= 无任何前驱节点
+      - BOSS： 出度 = 0 且入度 > 0 的节点
+              「分叉路线收束处」= 无任何后继节点
+
+    此函数由 build_map_graph 自动调用，无需手动调用。
+    """
+    if not graph.nodes:
+        return
+
+    # 统计每个节点的入度
+    in_degree: dict[int, int] = {nid: 0 for nid in graph.nodes}
+    for nid, neighbors in graph.adjacency.items():
+        for nbr in neighbors:
+            if nbr in in_degree:
+                in_degree[nbr] += 1
+
+    for nid, node in graph.nodes.items():
+        out_deg = len(graph.adjacency.get(nid, []))
+        in_deg  = in_degree.get(nid, 0)
+
+        if in_deg == 0 and out_deg > 0:
+            node.node_type = NodeType.START
+        elif out_deg == 0 and in_deg > 0:
+            node.node_type = NodeType.BOSS
 
 
 def _infer_edges_by_layer(graph: MapGraph) -> None:

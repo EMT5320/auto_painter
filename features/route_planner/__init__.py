@@ -7,19 +7,20 @@ features/route_planner/__init__.py
   - MapNode         : 单个地图节点
   - MapGraph        : 地图图结构
   - RoutePreferences: 用户路线偏好
-  - recognize_map   : 从截图识别地图
+  - recognize_map   : 从截图识别地图（单张）
+  - recognize_full_map_scrolled: 滚动采集 + 识别（全图）
   - build_map_graph : 构建图结构
   - rank_routes     : 路线评分排序
   - draw_route_on_screen: 在游戏内绘制路线
 """
 
-from .recognizer import NodeType, MapNode, recognize_map
+from .recognizer import NodeType, MapNode, recognize_map, recognize_full_map_scrolled
 from .graph import MapGraph, build_map_graph, find_all_routes
 from .optimizer import RoutePreferences, rank_routes
 from .drawer import draw_route_on_screen
 
 __all__ = [
-    "NodeType", "MapNode", "recognize_map",
+    "NodeType", "MapNode", "recognize_map", "recognize_full_map_scrolled",
     "MapGraph", "build_map_graph", "find_all_routes",
     "RoutePreferences", "rank_routes",
     "draw_route_on_screen",

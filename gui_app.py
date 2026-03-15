@@ -20,6 +20,15 @@ from PIL import Image, ImageDraw, ImageFont
 from features.painter.processor import process_image, process_text
 from core.path_opt import optimize_strokes
 from core.mouse import draw_strokes
+from features.route_planner import (
+    NodeType, recognize_map, build_map_graph, find_all_routes,
+    RoutePreferences, rank_routes, draw_route_on_screen,
+)
+from features.route_planner.recognizer import (
+    recognize_full_map_scrolled, stitch_screenshots, stitch_with_step_sizes,
+)
+from features.route_planner.optimizer import describe_route
+from features.route_planner.drawer import route_to_strokes
 
 # 可选：Windows 文件拖入支持
 try:
@@ -326,25 +335,14 @@ class AutoPainterApp(ctk.CTk):
         parent.grid_columnconfigure(1, weight=1, minsize=440)
         parent.grid_rowconfigure(0, weight=1)
 
-        # ── 左侧：截图 + 节点偏好设置 ──
+        # ── 左侧：偏好设置 + 操作 ──
         left = ctk.CTkFrame(parent, corner_radius=8)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 5), pady=0)
         left.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            left, text="地图识别",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 5))
-
-        ctk.CTkButton(
-            left, text="📷 截取游戏地图", height=36,
-            font=ctk.CTkFont(size=13),
-            command=self._route_capture_map
-        ).grid(row=1, column=0, sticky="ew", padx=12, pady=5)
-
         # ── 节点偏好设置 ──
         pref_frame = ctk.CTkFrame(left, corner_radius=6)
-        pref_frame.grid(row=2, column=0, sticky="ew", padx=12, pady=(12, 5))
+        pref_frame.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 5))
         pref_frame.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
@@ -394,25 +392,55 @@ class AutoPainterApp(ctk.CTk):
                 return _h
             var.trace_add("write", _make_handler())
 
-        # ── 操作按钮 ──
-        ctk.CTkButton(
-            left, text="🔍 分析路线", height=36,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color="#2d5a9e", hover_color="#3a72c4",
-            command=self._route_analyze
-        ).grid(row=3, column=0, sticky="ew", padx=12, pady=(12, 5))
-
-        ctk.CTkButton(
-            left, text="🖊 绘制选中路线", height=36,
-            font=ctk.CTkFont(size=13),
-            fg_color="#2d7d2d", hover_color="#3a9a3a",
-            command=self._route_draw_selected
-        ).grid(row=4, column=0, sticky="ew", padx=12, pady=5)
+        # ── 滚动采集设置 ──
+        scroll_frame = ctk.CTkFrame(left, corner_radius=6)
+        scroll_frame.grid(row=1, column=0, sticky="ew", padx=12, pady=(8, 5))
+        scroll_frame.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
-            left, text="⚠ Phase 1 开发中：请先提供节点模板图片",
-            text_color="#886600", font=ctk.CTkFont(size=10)
-        ).grid(row=5, column=0, padx=12, pady=(2, 12))
+            scroll_frame, text="地图采集设置",
+            font=ctk.CTkFont(size=13, weight="bold")
+        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=10, pady=(8, 4))
+
+        # 倒计时
+        ctk.CTkLabel(
+            scroll_frame, text="倒计时:", font=ctk.CTkFont(size=12)
+        ).grid(row=1, column=0, sticky="w", padx=(10, 5), pady=3)
+        self._route_countdown_var = tk.IntVar(value=5)
+        ctk.CTkSlider(
+            scroll_frame, from_=2, to=10, number_of_steps=8,
+            variable=self._route_countdown_var,
+        ).grid(row=1, column=1, sticky="ew", padx=5, pady=3)
+        self._route_cd_display = ctk.CTkLabel(
+            scroll_frame, text="5秒", width=42, font=ctk.CTkFont(size=11)
+        )
+        self._route_cd_display.grid(row=1, column=2, padx=(0, 10), pady=3)
+        self._route_countdown_var.trace_add("write", lambda *_:
+            self._route_cd_display.configure(text=f"{self._route_countdown_var.get()}秒"))
+
+        ctk.CTkLabel(
+            scroll_frame,
+            text="提示：滚动截图自适应调整，无需手动设置步数",
+            font=ctk.CTkFont(size=10), text_color="#888888"
+        ).grid(row=2, column=0, columnspan=3, sticky="w", padx=10, pady=(2, 8))
+
+        # ── 操作按钮 ──
+        self._route_start_btn = ctk.CTkButton(
+            left, text="▶ 开始规划并绘制", height=40,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color="#2d5a9e", hover_color="#3a72c4",
+            command=self._route_start
+        )
+        self._route_start_btn.grid(row=2, column=0, sticky="ew", padx=12, pady=(12, 5))
+
+        self._route_stop_btn = ctk.CTkButton(
+            left, text="■ 停止", height=36,
+            font=ctk.CTkFont(size=13),
+            fg_color="#aa3333", hover_color="#cc4444",
+            command=self._route_stop,
+            state="disabled"
+        )
+        self._route_stop_btn.grid(row=3, column=0, sticky="ew", padx=12, pady=(5, 12))
 
         # ── 右侧：地图预览 + 路线方案列表 ──
         right = ctk.CTkFrame(parent, corner_radius=8)
@@ -428,7 +456,7 @@ class AutoPainterApp(ctk.CTk):
 
         self.route_preview_label = ctk.CTkLabel(
             right,
-            text="截取游戏地图后\n将在此处显示识别结果",
+            text="点击「开始规划」后\n将自动截图并分析地图",
             text_color="#666666", font=ctk.CTkFont(size=12),
             corner_radius=6, fg_color="#1a1a1a"
         )
@@ -447,48 +475,324 @@ class AutoPainterApp(ctk.CTk):
 
         ctk.CTkLabel(
             self._route_list_frame,
-            text="点击「分析路线」后，推荐方案将在此处显示",
+            text="点击「开始规划」后，推荐方案将在此处显示",
             text_color="#666666", font=ctk.CTkFont(size=11)
         ).grid(row=0, column=0, sticky="w", padx=8, pady=8)
 
+        # 内部状态
+        self._route_graph = None
+        self._route_ranked = []   # [(score, path), ...]
+        self._route_stitched = None  # 拼接全图
+        self._route_scroll_plan = []
+        self._route_thread = None
+        self._route_stop_event = threading.Event()
+
     # ── 路线规划事件处理 ─────────────────────────────────────
 
-    def _route_capture_map(self):
-        """截取当前屏幕作为地图截图"""
-        self.log("📷 正在截取屏幕...")
-        import pyautogui
-        try:
-            self._route_screenshot = pyautogui.screenshot()
-            # 缩略图预览
-            thumb = self._route_screenshot.copy()
-            thumb.thumbnail((440, 300), 1)  # LANCZOS=1
-            from PIL import Image
-            self._route_preview_photo = ctk.CTkImage(
-                light_image=thumb, dark_image=thumb,
-                size=(thumb.width, thumb.height)
-            )
-            self.route_preview_label.configure(
-                image=self._route_preview_photo, text=""
-            )
-            self.log(f"✅ 截图完成：{self._route_screenshot.width}×{self._route_screenshot.height}")
-        except Exception as e:
-            self.log(f"❌ 截图失败：{e}")
-
-    def _route_analyze(self):
-        """分析地图路线（Phase 1 占位）"""
-        if self._route_screenshot is None:
-            self.log("⚠ 请先截取游戏地图")
+    def _route_start(self):
+        """开始一体化路线规划 + 绘制流程"""
+        if self._route_thread and self._route_thread.is_alive():
             return
-        self.log("🔍 正在分析地图路线...")
-        self.log("⚠ 节点识别功能开发中（Phase 1），需要先提供节点模板图片")
-        self.log("   模板图片存放位置：assets/node_templates/<类型>/*.png")
-        # TODO Phase 1: 调用 features.route_planner.recognize_map
-        # TODO Phase 2: 调用 build_map_graph + find_all_routes + rank_routes
-        # TODO Phase 2: 更新 _route_list_frame 显示推荐路线
 
-    def _route_draw_selected(self):
-        """绘制用户选定的路线（Phase 3 占位）"""
-        self.log("⚠ 路线绘制功能开发中（Phase 3），敬请期待～")
+        self._route_stop_event.clear()
+        self.stop_event.clear()
+        self._route_start_btn.configure(state="disabled")
+        self._route_stop_btn.configure(state="normal")
+
+        self._route_thread = threading.Thread(
+            target=self._route_worker, daemon=True
+        )
+        self._route_thread.start()
+
+    def _route_stop(self):
+        """中断路线规划流程"""
+        self._route_stop_event.set()
+        self.stop_event.set()
+        self._log_safe("⏹ 正在停止...")
+
+    def _route_worker(self):
+        """一体化路线规划 + 绘制后台线程"""
+        try:
+            countdown = self._route_countdown_var.get()
+
+            # ── 1. 倒计时 ──
+            for i in range(countdown, 0, -1):
+                if self._route_stop_event.is_set():
+                    self._route_finish("⏹ 已取消")
+                    return
+                self._log_safe(f"⏳ 请切换到游戏地图界面... {i}s")
+                self._status_safe(f"⏳ 切换到游戏... {i}s")
+                time.sleep(1)
+
+            # ── 2. 最小化 GUI 窗口 ──
+            self.after(0, self.iconify)
+            time.sleep(0.5)
+
+            if self._route_stop_event.is_set():
+                self._route_finish("⏹ 已取消")
+                return
+
+            # ── 3. 获取屏幕参数，执行滚动截图 ──
+            self._log_safe("📷 开始滚动采集地图...")
+            self._status_safe("📷 滚动采集中...")
+
+            screen_w, screen_h = pyautogui.size()
+            margin_x = int(screen_w * 0.05)
+            margin_y = int(screen_h * 0.05)
+            map_region = (margin_x, margin_y,
+                          screen_w - 2 * margin_x, screen_h - 2 * margin_y)
+            map_cx = screen_w // 2
+            map_cy = screen_h // 2
+
+            from core.screen import scroll_to_map_bottom, capture_scrolled_map_anchor, scroll_map
+
+            # 先滚到底部（起点）—— 大量向下滚动确保到底
+            self._log_safe("↓ 滚动到地图底部...")
+            scroll_to_map_bottom(map_cx, map_cy)
+
+            if self._route_stop_event.is_set():
+                self._route_finish("⏹ 已取消")
+                return
+
+            # 锚点式截图：每帧在前一帧的基础上精确衔接，无重叠/无多余帧
+            # anchor_rows=120: 用顶部 120px 做匹配锚点
+            # scroll_clicks_per_tick=20: 每小步 20 格，平滑滚动
+            raw_frames, scroll_plan, step_sizes = capture_scrolled_map_anchor(
+                region=map_region,
+                map_center=(map_cx, map_cy),
+                scroll_clicks_per_tick=20,
+                anchor_rows=120,
+                log_fn=self._log_safe,
+            )
+            screenshots = [img for img, _ in raw_frames]
+            self._route_scroll_plan = scroll_plan
+            self._log_safe(
+                f"📷 采集完成：{len(screenshots)} 个关键帧，"
+                f"step_sizes={step_sizes}"
+            )
+
+            if self._route_stop_event.is_set():
+                self._route_finish("⏹ 已取消")
+                return
+
+            # ── 4. 拼接截图（使用锚点精确步长，跳过重叠检测）──
+            self._log_safe("🧩 拼接地图中...")
+            self._status_safe("🧩 拼接中...")
+            if step_sizes:
+                stitched, y_offsets = stitch_with_step_sizes(screenshots, step_sizes)
+            else:
+                # 只有 1 帧（地图极短或直接到顶）
+                stitched, y_offsets = screenshots[0].copy(), [0]
+            self._route_stitched = stitched
+            self._update_route_preview(stitched)
+
+            if self._route_stop_event.is_set():
+                self._route_finish("⏹ 已取消")
+                return
+
+            # ── 5. 模板匹配识别节点 ──
+            self._log_safe("🔍 识别地图节点...")
+            self._status_safe("🔍 节点识别中...")
+
+            templates_dir = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "assets", "node_templates"
+            )
+
+            from features.route_planner.recognizer import (
+                load_all_templates, detect_nodes, _detect_edges_by_lines, _refine_detected_map
+            )
+
+            templates = load_all_templates(templates_dir)
+            if not templates:
+                self._log_safe("⚠ 未找到节点模板！请将模板图片放入 assets/node_templates/<类型>/")
+                for d in os.listdir(templates_dir):
+                    dpath = os.path.join(templates_dir, d)
+                    if os.path.isdir(dpath):
+                        files = [f for f in os.listdir(dpath) if f.lower().endswith(('.png','.jpg','.bmp'))]
+                        self._log_safe(f"   {d}/: {len(files)} 张图片")
+                self._route_finish("❌ 模板不足，无法识别")
+                return
+
+            self._log_safe(f"   已加载模板: {', '.join(t.name for t in templates)}")
+
+            stitched_gray = np.array(stitched.convert("L"))
+            nodes = detect_nodes(stitched_gray, templates)
+            self._log_safe(f"   原始识别到 {len(nodes)} 个节点")
+
+            if len(nodes) < 2:
+                self._log_safe("⚠ 识别到的节点过少，请检查模板图片或调整截图步数")
+                self._route_finish("❌ 节点不足")
+                return
+
+            # ── 5.5 虚线边检测 ──
+            self._log_safe("🔗 检测节点间虚线连接...")
+            edges = _detect_edges_by_lines(nodes, stitched_gray)
+            self._log_safe(f"   原始检测到 {len(edges)} 条虚线连接")
+
+            # 为节点附加 screen_pos 和 scroll_step
+            frame_h = screenshots[0].height
+            rx, ry = map_region[0], map_region[1]
+            for node in nodes:
+                cx, cy = node.position
+                best_step = 0
+                min_dist = float("inf")
+                for step, y_off in enumerate(y_offsets):
+                    local_y = cy - y_off
+                    if 0 <= local_y < frame_h:
+                        dist = abs(local_y - frame_h // 2)
+                        if dist < min_dist:
+                            min_dist = dist
+                            best_step = step
+                node.scroll_step = best_step
+                local_y_in_frame = cy - y_offsets[best_step]
+                node.screen_pos = (rx + cx, ry + local_y_in_frame)
+
+            nodes, edges = _refine_detected_map(nodes, edges)
+            self._log_safe(f"   去重净化后：{len(nodes)} 个节点，{len(edges)} 条边")
+
+            if self._route_stop_event.is_set():
+                self._route_finish("⏹ 已取消")
+                return
+
+            # ── 6. 构建图 + 枚举路径 + 评分 ──
+            self._log_safe("🗺 构建地图图结构...")
+            self._status_safe("🗺 路线分析中...")
+
+            graph = build_map_graph(nodes, edges)
+            all_routes = find_all_routes(graph)
+            self._log_safe(f"   枚举到 {len(all_routes)} 条可行路径")
+
+            if not all_routes:
+                self._log_safe("⚠ 未找到可行路线，地图识别可能不完整")
+                self._route_finish("❌ 无可行路线")
+                return
+
+            # 评分
+            slider_vals = {k: v.get() for k, v in self._route_weight_vars.items()}
+            prefs = RoutePreferences.from_slider_values(slider_vals)
+            ranked = rank_routes(all_routes, graph, prefs, top_n=5)
+
+            self._route_graph = graph
+            self._route_ranked = ranked
+
+            # 显示推荐
+            self._log_safe(f"✅ 分析完成！Top {len(ranked)} 推荐路线：")
+            for i, (score, path) in enumerate(ranked):
+                desc = describe_route(path, graph)
+                self._log_safe(f"   #{i+1} (得分 {score:.1f}): {desc}")
+
+            self.after(0, self._route_update_list)
+
+            # ── 7. 选择最优路线（得分相同则随机） ──
+            import random
+            best_score = ranked[0][0]
+            best_routes = [(s, p) for s, p in ranked if s == best_score]
+            chosen_score, chosen_path = random.choice(best_routes)
+
+            chosen_idx = ranked.index((chosen_score, chosen_path))
+            desc = describe_route(chosen_path, graph)
+            self._log_safe(f"🎯 选中路线 #{chosen_idx+1} (得分 {chosen_score:.1f}): {desc}")
+
+            if self._route_stop_event.is_set():
+                self._route_finish("⏹ 已取消")
+                return
+
+            # ── 8. 直接绘制选中路线 ──
+            self._log_safe("🖊 开始绘制路线...")
+            self._status_safe("🖊 绘制路线中...")
+
+            # 先滚回底部
+            scroll_to_map_bottom(map_cx, map_cy)
+            time.sleep(0.3)
+
+            # 按 scroll_step 分组绘制
+            scroll_plan = getattr(self, "_route_scroll_plan", [])
+            step_groups: dict[int, list[int]] = {}
+            for nid in chosen_path:
+                node = graph.nodes[nid]
+                step_groups.setdefault(node.scroll_step, []).append(nid)
+
+            current_step = 0
+            for target_step in sorted(step_groups.keys()):
+                steps_to_scroll = target_step - current_step
+                if steps_to_scroll > 0:
+                    for step_idx in range(current_step, target_step):
+                        scroll_clicks = scroll_plan[step_idx] if step_idx < len(scroll_plan) else 48
+                        scroll_map(scroll_clicks, map_cx, map_cy)
+                        time.sleep(0.3)
+                    current_step = target_step
+
+                if self._route_stop_event.is_set():
+                    self._route_finish("⏹ 绘制已中断")
+                    return
+
+                group_nids = set(step_groups[target_step])
+                sub_path = [nid for nid in chosen_path if nid in group_nids]
+                strokes = route_to_strokes(sub_path, graph)
+                if strokes:
+                    draw_strokes(
+                        strokes, move_speed=0.0004, button="right",
+                        stop_event=self.stop_event,
+                    )
+
+            if self._route_stop_event.is_set():
+                self._route_finish("⏹ 绘制已中断")
+            else:
+                self.after(0, self.deiconify)
+                self._route_finish_done("✅ 路线规划 + 绘制完成！")
+
+        except pyautogui.FailSafeException:
+            self.after(0, self.deiconify)
+            self._route_finish("⚡ 紧急中止（鼠标移到左上角）")
+        except Exception as e:
+            self.after(0, self.deiconify)
+            self._route_finish(f"❌ 错误: {e}")
+
+    def _route_update_list(self):
+        """更新路线列表 UI（主线程调用）"""
+        for w in self._route_list_frame.winfo_children():
+            w.destroy()
+
+        self._route_selected_var.set(0)
+
+        for i, (score, path) in enumerate(self._route_ranked):
+            desc = describe_route(path, self._route_graph)
+            text = f"#{i+1}  得分 {score:.1f}  |  {desc}"
+            rb = ctk.CTkRadioButton(
+                self._route_list_frame,
+                text=text,
+                variable=self._route_selected_var,
+                value=i,
+                font=ctk.CTkFont(size=11),
+            )
+            rb.grid(row=i, column=0, sticky="w", padx=8, pady=4)
+
+    def _update_route_preview(self, img):
+        """更新地图预览缩略图（线程安全）"""
+        thumb = img.copy()
+        thumb.thumbnail((440, 300), Image.LANCZOS)
+        photo = ctk.CTkImage(light_image=thumb, dark_image=thumb,
+                             size=(thumb.width, thumb.height))
+        self._route_preview_photo = photo
+        self.after(0, lambda: self.route_preview_label.configure(
+            image=self._route_preview_photo, text=""
+        ))
+
+    def _route_finish(self, msg):
+        """路线规划结束（失败/取消）"""
+        self._log_safe(msg)
+        self._status_safe(msg)
+        self.after(0, self.deiconify)
+        self.after(0, lambda: self._route_start_btn.configure(state="normal"))
+        self.after(0, lambda: self._route_stop_btn.configure(state="disabled"))
+
+    def _route_finish_done(self, msg):
+        """路线规划+绘制全流程成功"""
+        self._log_safe(msg)
+        self._status_safe(msg)
+        self.after(0, lambda: self._route_start_btn.configure(state="normal"))
+        self.after(0, lambda: self._route_stop_btn.configure(state="disabled"))
 
     def _build_bottom(self):
         bottom = ctk.CTkFrame(self)

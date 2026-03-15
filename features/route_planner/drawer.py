@@ -69,20 +69,25 @@ def route_to_strokes(
     """
     strokes: list[list[tuple[int, int]]] = []
 
+    def _pos(node):
+        """优先使用 screen_pos（滚动采集时为屏幕坐标），回退到 position"""
+        if hasattr(node, 'screen_pos') and node.screen_pos != (0, 0):
+            return node.screen_pos
+        return node.position
+
     # 连接线
     for i in range(len(route) - 1):
         n1 = graph.nodes.get(route[i])
         n2 = graph.nodes.get(route[i + 1])
         if n1 and n2:
-            strokes.append(_line_points(n1.position, n2.position))
+            strokes.append(_line_points(_pos(n1), _pos(n2)))
 
     # 节点圆圈标记（排除起点和终点）
     for nid in route:
         node = graph.nodes.get(nid)
         if node:
-            strokes.append(_circle_points(
-                node.position[0], node.position[1], node_circle_radius
-            ))
+            px, py = _pos(node)
+            strokes.append(_circle_points(px, py, node_circle_radius))
 
     return strokes
 
