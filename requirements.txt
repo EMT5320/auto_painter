@@ -4,5 +4,6 @@ Pillow>=10.0.0
 numpy>=1.24.0
 customtkinter>=5.2.0
 windnd>=1.0.7
+keyboard>=0.13.5
 # 路线规划功能（可选，自实现 DFS 时无需此依赖）
 # networkx>=3.0

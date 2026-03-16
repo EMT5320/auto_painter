@@ -37,6 +37,13 @@ try:
 except ImportError:
     HAS_DND = False
 
+# 可选：全局热键支持
+try:
+    import keyboard
+    HAS_KEYBOARD = True
+except ImportError:
+    HAS_KEYBOARD = False
+
 # ── 常量 ──────────────────────────────────────
 PREVIEW_SIZE = (400, 300)
 SPEED_MAP = {"慢速": 0.001, "中速": 0.0004, "快速": 0.00008}
@@ -65,6 +72,8 @@ class AutoPainterApp(ctk.CTk):
         self.font_path = None
         self.drawing_thread = None
         self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
+        self._registered_hotkey = None
         self.is_drawing = False
         self._preview_photo = None  # 防止 GC 回收
         self._thumb_photo = None
@@ -324,6 +333,20 @@ class AutoPainterApp(ctk.CTk):
             btn_frame, text="左键", variable=self.button_var,
             value="left", font=ctk.CTkFont(size=12)
         ).pack(side="left", padx=8)
+
+        # 暂停热键
+        ctk.CTkLabel(
+            settings_frame, text="暂停热键:", font=ctk.CTkFont(size=12)
+        ).grid(row=5, column=0, sticky="w", padx=(12, 5), pady=(4, 8))
+        self.pause_hotkey_var = tk.StringVar(value="F9")
+        ctk.CTkEntry(
+            settings_frame, textvariable=self.pause_hotkey_var,
+            width=80, font=ctk.CTkFont(size=12)
+        ).grid(row=5, column=1, sticky="w", padx=5, pady=(4, 8))
+        ctk.CTkLabel(
+            settings_frame, text="(绘制时全局生效)",
+            font=ctk.CTkFont(size=10), text_color="#888888"
+        ).grid(row=5, column=2, padx=(5, 12), pady=(4, 8), sticky="w")
 
     # ═══════════════════════════════════════════
     #  路线规划面板
@@ -802,7 +825,7 @@ class AutoPainterApp(ctk.CTk):
         # 按钮行
         btn_row = ctk.CTkFrame(bottom, fg_color="transparent")
         btn_row.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
-        btn_row.grid_columnconfigure(3, weight=1)
+        btn_row.grid_columnconfigure(4, weight=1)
 
         self.preview_btn = ctk.CTkButton(
             btn_row, text="📸 预览效果", width=130, height=36,
@@ -818,18 +841,26 @@ class AutoPainterApp(ctk.CTk):
         )
         self.start_btn.grid(row=0, column=1, padx=5)
 
+        self.pause_btn = ctk.CTkButton(
+            btn_row, text="⏸ 暂停", width=90, height=36,
+            fg_color="#7d6a2d", hover_color="#9a843a",
+            command=self._toggle_pause, state="disabled",
+            font=ctk.CTkFont(size=13)
+        )
+        self.pause_btn.grid(row=0, column=2, padx=5)
+
         self.stop_btn = ctk.CTkButton(
             btn_row, text="■ 停止", width=90, height=36,
             fg_color="#aa3333", hover_color="#cc4444",
             command=self._stop_drawing, state="disabled",
             font=ctk.CTkFont(size=13)
         )
-        self.stop_btn.grid(row=0, column=2, padx=5)
+        self.stop_btn.grid(row=0, column=3, padx=5)
 
         self.status_label = ctk.CTkLabel(
             btn_row, text="", font=ctk.CTkFont(size=12), text_color="#aaaaaa"
         )
-        self.status_label.grid(row=0, column=3, sticky="e", padx=10)
+        self.status_label.grid(row=0, column=4, sticky="e", padx=10)
 
         # 进度条
         self.progress_var = tk.DoubleVar(value=0)
@@ -1027,18 +1058,81 @@ class AutoPainterApp(ctk.CTk):
 
         self.is_drawing = True
         self.stop_event.clear()
+        self.pause_event.clear()
         self.start_btn.configure(state="disabled")
+        self.pause_btn.configure(state="normal", text="⏸ 暂停")
         self.stop_btn.configure(state="normal")
         self.preview_btn.configure(state="disabled")
         self.progress_bar.set(0)
+        self._register_pause_hotkey()
 
         self.drawing_thread = threading.Thread(
             target=self._drawing_worker, daemon=True
         )
         self.drawing_thread.start()
 
+    def _toggle_pause(self):
+        """切换暂停/恢复状态"""
+        if not self.is_drawing:
+            return
+        if self.pause_event.is_set():
+            self.pause_event.clear()
+            self._log_safe("▶ 恢复绘制...")
+            self._status_safe("▶ 绘制恢复中...")
+            self.after(0, lambda: self.pause_btn.configure(text="⏸ 暂停"))
+        else:
+            self.pause_event.set()
+            hotkey_str = self.pause_hotkey_var.get() if hasattr(self, 'pause_hotkey_var') else "F9"
+            self._log_safe(f"⏸ 绘制已暂停（按 [{hotkey_str}] 或点击「▶ 恢复」继续）")
+            self._status_safe("⏸ 已暂停")
+            self.after(0, lambda: self.pause_btn.configure(text="▶ 恢复"))
+
+    def _register_pause_hotkey(self):
+        """注册全局暂停热键"""
+        if not HAS_KEYBOARD:
+            return
+        hotkey = self.pause_hotkey_var.get().strip() or "F9"
+        try:
+            keyboard.add_hotkey(hotkey, self._toggle_pause, suppress=False)
+            self._registered_hotkey = hotkey
+            self._log_safe(f"⌨ 暂停热键已注册: [{hotkey}]")
+        except Exception as e:
+            self._registered_hotkey = None
+            self._log_safe(f"⚠ 热键 [{hotkey}] 注册失败: {e}")
+
+    def _unregister_pause_hotkey(self):
+        """注销全局暂停热键"""
+        if not HAS_KEYBOARD or not self._registered_hotkey:
+            return
+        try:
+            keyboard.remove_hotkey(self._registered_hotkey)
+        except Exception:
+            pass
+        self._registered_hotkey = None
+
+    def _make_resume_scroll_fn(self):
+        """生成恢复绘制时的屏幕定位函数：微调滚动使暂停点可见，然后移动鼠标到该位置"""
+        def scroll_to_pos(x, y):
+            sw, sh = pyautogui.size()
+            margin = int(sh * 0.15)
+            cx = sw // 2
+            # 若暂停点靠近屏幕边缘，做微调滚动以让其可见
+            if y < margin:
+                pyautogui.moveTo(cx, sh // 2)
+                pyautogui.scroll(3)
+                time.sleep(0.2)
+            elif y > sh - margin:
+                pyautogui.moveTo(cx, sh // 2)
+                pyautogui.scroll(-3)
+                time.sleep(0.2)
+            # 移动鼠标到暂停位置
+            pyautogui.moveTo(x, y)
+            time.sleep(0.2)
+        return scroll_to_pos
+
     def _stop_drawing(self):
         if self.is_drawing:
+            self.pause_event.clear()  # 确保暂停等待不会卡住
             self.stop_event.set()
             self.log("⏹ 正在停止...")
 
@@ -1094,7 +1188,9 @@ class AutoPainterApp(ctk.CTk):
             draw_strokes(
                 strokes, move_speed=speed, button=btn,
                 progress_callback=self._progress_safe,
-                stop_event=self.stop_event
+                stop_event=self.stop_event,
+                pause_event=self.pause_event,
+                resume_scroll_fn=self._make_resume_scroll_fn()
             )
 
             if self.stop_event.is_set():
@@ -1109,9 +1205,12 @@ class AutoPainterApp(ctk.CTk):
 
     def _finish_drawing(self, msg):
         self.is_drawing = False
+        self.pause_event.clear()
+        self._unregister_pause_hotkey()
         self._log_safe(msg)
         self._status_safe(msg)
         self.after(0, lambda: self.start_btn.configure(state="normal"))
+        self.after(0, lambda: self.pause_btn.configure(state="disabled", text="⏸ 暂停"))
         self.after(0, lambda: self.stop_btn.configure(state="disabled"))
         self.after(0, lambda: self.preview_btn.configure(state="normal"))
 
@@ -1144,9 +1243,11 @@ class AutoPainterApp(ctk.CTk):
 
     def _on_closing(self):
         if self.is_drawing:
+            self.pause_event.clear()
             self.stop_event.set()
             if self.drawing_thread:
                 self.drawing_thread.join(timeout=3)
+        self._unregister_pause_hotkey()
         self.destroy()
 
 

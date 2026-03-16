@@ -57,7 +57,8 @@ def _safe_point(x, y, margin=5):
 
 
 def draw_strokes(strokes: list, move_speed: float = 0.0005, lift_speed: float = 0.001,
-                 button: str = 'right', progress_callback=None, stop_event=None):
+                 button: str = 'right', progress_callback=None, stop_event=None,
+                 pause_event=None, resume_scroll_fn=None):
     """
     执行绘制
     :param strokes: [ [(x,y), ...], [(x,y), ...], ... ] 每个子列表是一段连续笔画
@@ -66,6 +67,8 @@ def draw_strokes(strokes: list, move_speed: float = 0.0005, lift_speed: float = 
     :param button: 绘制用的鼠标键，'right' 或 'left'
     :param progress_callback: 可选，callable(current, total) 用于GUI进度更新
     :param stop_event: 可选，threading.Event 用于中断绘制
+    :param pause_event: 可选，threading.Event 暂停控制（set=暂停，clear=继续）
+    :param resume_scroll_fn: 可选，callable(x, y) 恢复绘制时的屏幕定位函数
     """
     if not strokes:
         print("⚠ 没有可绘制的路径")
@@ -77,9 +80,27 @@ def draw_strokes(strokes: list, move_speed: float = 0.0005, lift_speed: float = 
     current_pos = None
 
     for i, stroke in enumerate(strokes):
+        # ── 停止检查 ──
         if stop_event and stop_event.is_set():
             pyautogui.mouseUp(button=button)
             return
+
+        # ── 暂停检查（笔画之间，鼠标已抬起，安全暂停）──
+        if pause_event and pause_event.is_set():
+            pyautogui.mouseUp(button=button)
+            _paused_at = current_pos
+            print(f"\n⏸ 绘制已暂停（第 {i + 1}/{total_strokes} 段前，位置：{_paused_at}）")
+            while pause_event.is_set():
+                if stop_event and stop_event.is_set():
+                    return
+                time.sleep(0.05)
+            print("▶ 恢复绘制...")
+            if _paused_at:
+                if resume_scroll_fn:
+                    resume_scroll_fn(_paused_at[0], _paused_at[1])
+                else:
+                    pyautogui.moveTo(_paused_at[0], _paused_at[1])
+                    time.sleep(0.2)
 
         if not stroke:
             continue
@@ -109,6 +130,28 @@ def draw_strokes(strokes: list, move_speed: float = 0.0005, lift_speed: float = 
         pyautogui.mouseDown(button=button)
 
         for j in range(1, len(stroke)):
+            # ── 暂停检查（笔画中途）──
+            if pause_event and pause_event.is_set():
+                _paused_at = stroke[j - 1]
+                pyautogui.mouseUp(button=button)
+                print(f"\n⏸ 绘制已暂停（第 {i + 1} 段，第 {j}/{len(stroke) - 1} 步，位置：{_paused_at}）")
+                while pause_event.is_set():
+                    if stop_event and stop_event.is_set():
+                        return
+                    time.sleep(0.05)
+                print("▶ 恢复绘制...")
+                if resume_scroll_fn:
+                    resume_scroll_fn(_paused_at[0], _paused_at[1])
+                else:
+                    pyautogui.moveTo(_paused_at[0], _paused_at[1])
+                    time.sleep(0.2)
+                pyautogui.mouseDown(button=button)
+
+            # ── 停止检查 ──
+            if stop_event and stop_event.is_set():
+                pyautogui.mouseUp(button=button)
+                return
+
             seg = interpolate_points(stroke[j-1], stroke[j], step=4)
             for pt in seg:
                 pyautogui.moveTo(pt[0], pt[1])
