@@ -1110,26 +1110,6 @@ class AutoPainterApp(ctk.CTk):
             pass
         self._registered_hotkey = None
 
-    def _make_resume_scroll_fn(self):
-        """生成恢复绘制时的屏幕定位函数：微调滚动使暂停点可见，然后移动鼠标到该位置"""
-        def scroll_to_pos(x, y):
-            sw, sh = pyautogui.size()
-            margin = int(sh * 0.15)
-            cx = sw // 2
-            # 若暂停点靠近屏幕边缘，做微调滚动以让其可见
-            if y < margin:
-                pyautogui.moveTo(cx, sh // 2)
-                pyautogui.scroll(3)
-                time.sleep(0.2)
-            elif y > sh - margin:
-                pyautogui.moveTo(cx, sh // 2)
-                pyautogui.scroll(-3)
-                time.sleep(0.2)
-            # 移动鼠标到暂停位置
-            pyautogui.moveTo(x, y)
-            time.sleep(0.2)
-        return scroll_to_pos
-
     def _stop_drawing(self):
         if self.is_drawing:
             self.pause_event.clear()  # 确保暂停等待不会卡住
@@ -1189,8 +1169,7 @@ class AutoPainterApp(ctk.CTk):
                 strokes, move_speed=speed, button=btn,
                 progress_callback=self._progress_safe,
                 stop_event=self.stop_event,
-                pause_event=self.pause_event,
-                resume_scroll_fn=self._make_resume_scroll_fn()
+                pause_event=self.pause_event
             )
 
             if self.stop_event.is_set():
