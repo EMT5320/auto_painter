@@ -1,7 +1,7 @@
 """
 main.py
 杀戮尖塔2 自动绘画程序
-使用 Canny 边缘检测 + 最近邻路径优化 + 鼠标模拟右键绘制
+支持 Canny 边缘检测 / AI 素描（Informative Drawings）两种图像处理模式
 
 使用方法：
   python main.py
@@ -14,6 +14,7 @@ import sys
 import os
 
 from features.painter.processor import process_image, process_text
+from features.painter.ai_sketch import process_image_ai
 from core.path_opt import optimize_strokes
 from core.mouse import countdown, draw_strokes
 
@@ -133,14 +134,46 @@ def mode_text():
     draw_strokes(strokes, move_speed=speed, button=btn)
 
 
+def mode_ai_sketch():
+    """AI 素描模式"""
+    path = input("\n📁 请输入图片路径（支持 jpg/png/bmp）：").strip().strip('"')
+    if not os.path.exists(path):
+        print(f"❌ 文件不存在：{path}")
+        return
+
+    print("\n🎨 细节等级：")
+    print("  1. 极简（线条少，速度快）")
+    print("  2. 普通（推荐）")
+    print("  3. 精细（线条多，更还原）")
+    detail_choice = input("  选择 [1/2/3，默认2]: ").strip() or "2"
+    detail_map = {"1": "minimal", "2": "normal", "3": "detailed"}
+    detail_level = detail_map.get(detail_choice, "normal")
+
+    ratio = ask_canvas_ratio()
+    btn   = ask_button()
+    speed = ask_speed()
+    wait  = ask_countdown()
+
+    print("\n⚙  AI 处理图片中...")
+    raw_contours = process_image_ai(path, canvas_ratio=ratio, detail_level=detail_level)
+
+    print("⚙  优化路径中...")
+    strokes = optimize_strokes(raw_contours, min_dist=1.0)
+    print(f"✅ 优化后共 {len(strokes)} 段笔画")
+
+    countdown(wait)
+    draw_strokes(strokes, move_speed=speed, button=btn)
+
+
 def main():
     print_banner()
 
     while True:
         print("=" * 48)
         print("请选择模式：")
-        print("  1. 🖼  图片绘制")
+        print("  1. 🖼  图片绘制（Canny 边缘检测）")
         print("  2. ✏  文字绘制")
+        print("  3. 🤖 AI 素描（推荐，效果更好）")
         print("  0. 退出")
         print("=" * 48)
         choice = input("输入选项：").strip()
@@ -149,6 +182,8 @@ def main():
             mode_image()
         elif choice == "2":
             mode_text()
+        elif choice == "3":
+            mode_ai_sketch()
         elif choice == "0":
             print("👋 再见！")
             sys.exit(0)

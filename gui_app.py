@@ -18,6 +18,7 @@ import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont
 
 from features.painter.processor import process_image, process_text
+from features.painter.ai_sketch import process_image_ai, get_line_art_preview
 from core.path_opt import optimize_strokes
 from core.mouse import draw_strokes
 from features.route_planner import (
@@ -133,6 +134,7 @@ class AutoPainterApp(ctk.CTk):
         self.tabview.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
         self._build_image_tab()
+        self._build_ai_sketch_tab()
         self._build_text_tab()
 
     def _build_image_tab(self):
@@ -204,6 +206,60 @@ class AutoPainterApp(ctk.CTk):
         self.canny_high_display.grid(row=1, column=2, padx=5)
         self.canny_high_var.trace_add("write", lambda *_: self.canny_high_display.configure(
             text=str(self.canny_high_var.get())))
+
+    def _build_ai_sketch_tab(self):
+        tab = self.tabview.add("🤖 AI 素描模式")
+        tab.grid_columnconfigure(0, weight=1)
+
+        # 拖入/选择区域
+        drop_frame = ctk.CTkFrame(
+            tab, height=110, corner_radius=8,
+            border_width=2, border_color="#555555"
+        )
+        drop_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+        drop_frame.grid_propagate(False)
+        drop_frame.grid_columnconfigure(0, weight=1)
+        drop_frame.grid_rowconfigure(0, weight=1)
+
+        self.ai_drop_label = ctk.CTkLabel(
+            drop_frame,
+            text="📁 点击选择图片，或拖入图片文件\n支持 jpg / png / bmp",
+            font=ctk.CTkFont(size=13), text_color="#888888",
+            cursor="hand2"
+        )
+        self.ai_drop_label.grid(row=0, column=0, sticky="nsew")
+        self.ai_drop_label.bind("<Button-1>", lambda e: self._browse_image())
+        drop_frame.bind("<Button-1>", lambda e: self._browse_image())
+
+        # 文件信息
+        self.ai_file_label = ctk.CTkLabel(
+            tab, text="未选择文件", text_color="#888888",
+            font=ctk.CTkFont(size=11)
+        )
+        self.ai_file_label.grid(row=1, column=0, sticky="w", padx=15, pady=(0, 10))
+
+        # AI 参数
+        ai_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        ai_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        ai_frame.grid_columnconfigure(1, weight=1)
+        
+        ctk.CTkLabel(
+            ai_frame, text="细节等级:", font=ctk.CTkFont(size=12)
+        ).grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        
+        self.ai_detail_var = tk.StringVar(value="normal")
+        detail_frame = ctk.CTkFrame(ai_frame, fg_color="transparent")
+        detail_frame.grid(row=0, column=1, sticky="w", padx=5)
+        
+        ctk.CTkRadioButton(
+            detail_frame, text="极简", variable=self.ai_detail_var, value="minimal", font=ctk.CTkFont(size=12)
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkRadioButton(
+            detail_frame, text="普通(推荐)", variable=self.ai_detail_var, value="normal", font=ctk.CTkFont(size=12)
+        ).pack(side="left", padx=8)
+        ctk.CTkRadioButton(
+            detail_frame, text="精细", variable=self.ai_detail_var, value="detailed", font=ctk.CTkFont(size=12)
+        ).pack(side="left", padx=8)
 
     def _build_text_tab(self):
         tab = self.tabview.add("✏ 文字模式")
@@ -913,7 +969,8 @@ class AutoPainterApp(ctk.CTk):
         ext = os.path.splitext(path)[1].lower()
         if ext in (".jpg", ".jpeg", ".png", ".bmp"):
             self._set_image(path)
-            self.tabview.set("🖼 图片模式")
+            if self.tabview.get() not in ("🖼 图片模式", "🤖 AI 素描模式"):
+                self.tabview.set("🤖 AI 素描模式")
         else:
             self.log(f"⚠ 不支持的文件格式: {ext}  路径: {path}")
 
@@ -924,6 +981,8 @@ class AutoPainterApp(ctk.CTk):
         self.image_path = path
         name = os.path.basename(path)
         self.file_label.configure(text=f"📄 {name}", text_color="#cccccc")
+        if hasattr(self, 'ai_file_label'):
+            self.ai_file_label.configure(text=f"📄 {name}", text_color="#cccccc")
 
         # 显示缩略图
         try:
@@ -937,8 +996,15 @@ class AutoPainterApp(ctk.CTk):
                 image=self._thumb_photo,
                 text=f"\n{name}\n点击重新选择"
             )
+            if hasattr(self, 'ai_drop_label'):
+                self.ai_drop_label.configure(
+                    image=self._thumb_photo,
+                    text=f"\n{name}\n点击重新选择"
+                )
         except Exception:
             self.drop_label.configure(text=f"📄 {name}\n点击重新选择")
+            if hasattr(self, 'ai_drop_label'):
+                self.ai_drop_label.configure(text=f"📄 {name}\n点击重新选择")
 
         self.log(f"已选择图片: {name}")
 
@@ -975,6 +1041,8 @@ class AutoPainterApp(ctk.CTk):
         try:
             if tab == "🖼 图片模式":
                 self._preview_image_mode()
+            elif tab == "🤖 AI 素描模式":
+                self._preview_ai_sketch_mode()
             else:
                 self._preview_text_mode()
         except Exception as e:
@@ -1000,6 +1068,28 @@ class AutoPainterApp(ctk.CTk):
 
         self._show_preview(Image.fromarray(edges))
         self.log(f"📸 预览已更新 — 检测到 {len(contours)} 段轮廓")
+
+    def _preview_ai_sketch_mode(self):
+        if not self.image_path:
+            self.log("⚠ 请先选择图片")
+            return
+            
+        self.log("🤖 正在生成 AI 线稿预览，请稍候（首次需下载/加载模型可能发呆数秒）...")
+        self.update() # 刷新UI使文本显示
+        try:
+            pil_img = get_line_art_preview(
+                self.image_path,
+                detail_level=self.ai_detail_var.get()
+            )
+            pil_img.thumbnail(PREVIEW_SIZE, Image.LANCZOS)
+            
+            img_array = np.array(pil_img)
+            contours, _ = cv2.findContours(img_array, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+            
+            self._show_preview(pil_img)
+            self.log(f"📸 AI 素描预览已更新 — 检测到约 {len(contours)} 段轮廓")
+        except Exception as e:
+            self.log(f"❌ AI 预览失败: {e}")
 
     def _preview_text_mode(self):
         text = self.text_input.get("1.0", "end").strip()
@@ -1049,7 +1139,7 @@ class AutoPainterApp(ctk.CTk):
             return
 
         tab = self.tabview.get()
-        if tab == "🖼 图片模式" and not self.image_path:
+        if tab in ("🖼 图片模式", "🤖 AI 素描模式") and not self.image_path:
             self.log("⚠ 请先选择图片")
             return
         if tab == "✏ 文字模式" and not self.text_input.get("1.0", "end").strip():
@@ -1131,6 +1221,13 @@ class AutoPainterApp(ctk.CTk):
                     self.image_path, canvas_ratio=ratio,
                     canny_low=self.canny_low_var.get(),
                     canny_high=self.canny_high_var.get()
+                )
+                min_dist = 1.0
+            elif tab == "🤖 AI 素描模式":
+                self._log_safe("⚙ AI 处理图片中 (首次需加载模型)...")
+                raw_contours = process_image_ai(
+                    self.image_path, canvas_ratio=ratio,
+                    detail_level=self.ai_detail_var.get()
                 )
                 min_dist = 1.0
             else:
