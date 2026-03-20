@@ -15,7 +15,12 @@ import os
 
 from features.painter.processor import process_image, process_text
 from features.painter.ai_sketch import process_image_ai
-from core.path_opt import optimize_strokes
+from core.path_opt import (
+    OPTIMIZE_ALGORITHMS,
+    format_stroke_stats,
+    get_stroke_stats,
+    optimize_strokes,
+)
 from core.mouse import countdown, draw_strokes
 
 
@@ -67,6 +72,15 @@ def ask_button():
     print("  2. 左键")
     choice = input("  选择 [1/2，默认1]: ").strip() or "1"
     return 'left' if choice == "2" else 'right'
+
+
+def ask_ai_optimize_algorithm():
+    """询问 AI 素描模式的路径优化算法"""
+    print("🧠 路径优化算法：")
+    print(f"  1. {OPTIMIZE_ALGORITHMS['legacy']}（旧版）")
+    print(f"  2. {OPTIMIZE_ALGORITHMS['quality']}（新算法）")
+    choice = input("  选择 [1/2，默认1]: ").strip() or "1"
+    return "quality" if choice == "2" else "legacy"
 
 
 def mode_image():
@@ -148,6 +162,7 @@ def mode_ai_sketch():
     detail_choice = input("  选择 [1/2/3，默认2]: ").strip() or "2"
     detail_map = {"1": "minimal", "2": "normal", "3": "detailed"}
     detail_level = detail_map.get(detail_choice, "normal")
+    algorithm = ask_ai_optimize_algorithm()
 
     ratio = ask_canvas_ratio()
     btn   = ask_button()
@@ -157,9 +172,11 @@ def mode_ai_sketch():
     print("\n⚙  AI 处理图片中...")
     raw_contours = process_image_ai(path, canvas_ratio=ratio, detail_level=detail_level)
 
-    print("⚙  优化路径中...")
-    strokes = optimize_strokes(raw_contours, min_dist=1.0)
-    print(f"✅ 优化后共 {len(strokes)} 段笔画")
+    algo_name = OPTIMIZE_ALGORITHMS.get(algorithm, algorithm)
+    print(f"⚙  优化路径中...（{algo_name}）")
+    strokes = optimize_strokes(raw_contours, min_dist=1.0, algorithm=algorithm)
+    stats_text = format_stroke_stats(get_stroke_stats(strokes))
+    print(f"✅ 路径优化完成：{stats_text}")
 
     countdown(wait)
     draw_strokes(strokes, move_speed=speed, button=btn)

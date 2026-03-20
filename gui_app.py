@@ -19,7 +19,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 from features.painter.processor import process_image, process_text
 from features.painter.ai_sketch import process_image_ai, get_line_art_preview
-from core.path_opt import optimize_strokes
+from core.path_opt import (
+    OPTIMIZE_ALGORITHMS,
+    format_stroke_stats,
+    get_stroke_stats,
+    optimize_strokes,
+)
 from core.mouse import draw_strokes
 from features.route_planner import (
     NodeType, recognize_map, build_map_graph, find_all_routes,
@@ -259,6 +264,27 @@ class AutoPainterApp(ctk.CTk):
         ).pack(side="left", padx=8)
         ctk.CTkRadioButton(
             detail_frame, text="精细", variable=self.ai_detail_var, value="detailed", font=ctk.CTkFont(size=12)
+        ).pack(side="left", padx=8)
+
+        ctk.CTkLabel(
+            ai_frame, text="路径优化:", font=ctk.CTkFont(size=12)
+        ).grid(row=1, column=0, sticky="w", padx=5, pady=(8, 5))
+        self.ai_opt_algo_var = tk.StringVar(value="legacy")
+        opt_frame = ctk.CTkFrame(ai_frame, fg_color="transparent")
+        opt_frame.grid(row=1, column=1, sticky="w", padx=5, pady=(8, 5))
+        ctk.CTkRadioButton(
+            opt_frame,
+            text="经典(旧版)",
+            variable=self.ai_opt_algo_var,
+            value="legacy",
+            font=ctk.CTkFont(size=12),
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkRadioButton(
+            opt_frame,
+            text="增强(新算法)",
+            variable=self.ai_opt_algo_var,
+            value="quality",
+            font=ctk.CTkFont(size=12),
         ).pack(side="left", padx=8)
 
     def _build_text_tab(self):
@@ -1085,9 +1111,21 @@ class AutoPainterApp(ctk.CTk):
             
             img_array = np.array(pil_img)
             contours, _ = cv2.findContours(img_array, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+            algo = self.ai_opt_algo_var.get()
+            raw_contours = []
+            for cnt in contours:
+                pts = [(int(p[0][0]), int(p[0][1])) for p in cnt]
+                if len(pts) >= 2:
+                    raw_contours.append(pts)
+            strokes = optimize_strokes(raw_contours, min_dist=1.0, algorithm=algo)
+            stats_text = format_stroke_stats(get_stroke_stats(strokes))
             
             self._show_preview(pil_img)
-            self.log(f"📸 AI 素描预览已更新 — 检测到约 {len(contours)} 段轮廓")
+            self.log(
+                f"📸 AI 素描预览已更新 — 轮廓约 {len(contours)} 段，"
+                f"优化[{OPTIMIZE_ALGORITHMS.get(algo, algo)}]：{stats_text}"
+            )
         except Exception as e:
             self.log(f"❌ AI 预览失败: {e}")
 
@@ -1213,6 +1251,7 @@ class AutoPainterApp(ctk.CTk):
             speed = SPEED_MAP[self.speed_var.get()]
             btn = self.button_var.get()
             wait = self.countdown_var.get()
+            algorithm = "legacy"
 
             # 处理图片/文字
             if tab == "🖼 图片模式":
@@ -1230,6 +1269,7 @@ class AutoPainterApp(ctk.CTk):
                     detail_level=self.ai_detail_var.get()
                 )
                 min_dist = 1.0
+                algorithm = self.ai_opt_algo_var.get()
             else:
                 text = self.text_input.get("1.0", "end").strip()
                 self._log_safe("⚙ 渲染文字中...")
@@ -1242,9 +1282,11 @@ class AutoPainterApp(ctk.CTk):
                 self._finish_drawing("⏹ 已取消")
                 return
 
-            self._log_safe("⚙ 优化路径中...")
-            strokes = optimize_strokes(raw_contours, min_dist=min_dist)
-            self._log_safe(f"✅ 优化后共 {len(strokes)} 段笔画")
+            algo_name = OPTIMIZE_ALGORITHMS.get(algorithm, algorithm)
+            self._log_safe(f"⚙ 优化路径中...（{algo_name}）")
+            strokes = optimize_strokes(raw_contours, min_dist=min_dist, algorithm=algorithm)
+            stats_text = format_stroke_stats(get_stroke_stats(strokes))
+            self._log_safe(f"✅ 路径优化完成：{stats_text}")
 
             if self.stop_event.is_set():
                 self._finish_drawing("⏹ 已取消")
