@@ -215,7 +215,7 @@ def process_image_ai(image_path: str,
     AI 素描模式：将图片转为高质量线稿再提取绘制路径
     :param image_path: 图片路径
     :param canvas_ratio: 画布占屏幕比例
-    :param threshold: 二值化阈值（越小线条越多越密）
+    :param threshold: 二值化阈值（越大线条越多越密）
     :param model_size: 模型输入尺寸（越大细节越多但推理越慢）
     :param detail_level: 细节等级 "minimal"/"normal"/"detailed"
     :return: 屏幕坐标轮廓列表
@@ -241,9 +241,9 @@ def process_image_ai(image_path: str,
 
     # 根据细节等级调整参数
     detail_configs = {
-        "minimal":  {"threshold": 180, "model_size": 384},
+        "minimal":  {"threshold": 80,  "model_size": 384},
         "normal":   {"threshold": threshold, "model_size": model_size},
-        "detailed": {"threshold": 80,  "model_size": 768},
+        "detailed": {"threshold": 180, "model_size": 768},
     }
     cfg = detail_configs.get(detail_level, detail_configs["normal"])
     effective_threshold = cfg["threshold"]
@@ -275,9 +275,9 @@ def get_line_art_preview(image_path: str,
     :return: PIL 灰度图
     """
     detail_configs = {
-        "minimal":  {"threshold": 180, "model_size": 384},
+        "minimal":  {"threshold": 80,  "model_size": 384},
         "normal":   {"threshold": threshold, "model_size": model_size},
-        "detailed": {"threshold": 80,  "model_size": 768},
+        "detailed": {"threshold": 180, "model_size": 768},
     }
     cfg = detail_configs.get(detail_level, detail_configs["normal"])
 
