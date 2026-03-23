@@ -1,0 +1,33 @@
+# .codex/config.toml — STS2 助手项目级 Codex 配置
+# 本文件作用域仅限此项目（trusted project），不影响全局 ~/.codex/config.toml
+#
+# 使用前提：
+#   1. STS2 已运行且 STS2AIAgent Mod 已加载
+#   2. http://127.0.0.1:8080/health 返回 200
+#   3. 已执行 `pip install --user "fastmcp>=3.1.0,<4.0.0"` 安装依赖
+
+# ---------------------------------------------------------------------------
+# 方案 A：stdio 模式（推荐，桌面客户端首选）
+# 将 cwd 改为 STS2-Agent 仓库中 mcp_server/ 的实际绝对路径
+# ---------------------------------------------------------------------------
+[mcp_servers.sts2-ai-agent]
+command = "python"
+args   = ["-m", "sts2_mcp"]
+cwd    = "D:/Games/script/auto_painter/mcp/sts2-ai-agent-v0.5.2-windows/mcp_server"
+startup_timeout_sec = 15
+tool_timeout_sec    = 30
+
+[mcp_servers.sts2-ai-agent.env]
+PYTHONPATH                 = "D:/Games/script/auto_painter/mcp/sts2-ai-agent-v0.5.2-windows/mcp_server/src"
+STS2_API_BASE_URL          = "http://127.0.0.1:8080"
+STS2_API_TIMEOUT_SECONDS   = "10"
+# STS2_ENABLE_DEBUG_ACTIONS = "0"   # 保持关闭，仅开发时启用
+
+# ---------------------------------------------------------------------------
+# 方案 B：HTTP 模式（先手动启动 MCP 网络服务器再用此配置）
+#   Windows: powershell -ExecutionPolicy Bypass -File ".\scripts\start-mcp-network.ps1"
+# ---------------------------------------------------------------------------
+# [mcp_servers.sts2-ai-agent-remote]
+# url = "http://127.0.0.1:8765/mcp"
+# startup_timeout_sec = 10
+# tool_timeout_sec    = 30

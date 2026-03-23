@@ -16,8 +16,8 @@ from .schemas import GameSnapshot, SceneType
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_HOST = "localhost"
-DEFAULT_PORT = 58000
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8080
 DEFAULT_TIMEOUT = 5.0
 
 
