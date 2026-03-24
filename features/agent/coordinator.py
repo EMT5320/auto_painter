@@ -172,8 +172,16 @@ class Coordinator:
                 logger.warning("Action rejected by rule_guard: %s", action)
                 validated = self.rule_guard.safe_default(snapshot)
                 source = "rule_fallback"
+                decision = ActionDecision(
+                    action=validated,
+                    source=source,
+                    reasoning="rule_guard fallback after validation failure",
+                )
             action = validated
             result = self.bridge.perform_action(action)
+
+        # --- Capture state delta (for offline reward computation) ---
+        delta = self._compute_delta(snapshot)
 
         # --- Record ---
         if self.recorder is not None:
@@ -182,6 +190,8 @@ class Coordinator:
                 action=action,
                 result=result,
                 source=source,
+                decision=decision,
+                delta=delta,
             )
 
         return True
@@ -244,3 +254,38 @@ class Coordinator:
                 ]
             }
         return ctx
+
+    def _compute_delta(self, snapshot_before: GameSnapshot) -> Optional[dict]:
+        """
+        Capture key state changes after action execution.
+
+        Keeps it lightweight: only fetches HP/gold/scene from the bridge
+        to compute deltas. Returns None if the bridge is unavailable.
+        """
+        after = self.bridge.get_snapshot_safe()
+        if after is None:
+            return None
+
+        delta: dict = {}
+        hp_before = snapshot_before.run.hp or 0
+        hp_after = after.run.hp or 0
+        gold_before = snapshot_before.run.gold or 0
+        gold_after = after.run.gold or 0
+
+        delta["hp_change"] = hp_after - hp_before
+        delta["gold_change"] = gold_after - gold_before
+
+        if after.run.scene != snapshot_before.run.scene:
+            delta["scene_changed"] = after.run.scene.value
+
+        if after.run.floor != snapshot_before.run.floor:
+            delta["floor_changed"] = after.run.floor
+
+        # Battle-specific: count enemies killed
+        if snapshot_before.battle and after.battle:
+            alive_before = sum(1 for e in snapshot_before.battle.enemies if not e.is_dead)
+            alive_after = sum(1 for e in after.battle.enemies if not e.is_dead)
+            if alive_before > alive_after:
+                delta["enemies_killed"] = alive_before - alive_after
+
+        return delta if delta else None

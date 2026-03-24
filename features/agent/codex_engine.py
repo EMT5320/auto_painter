@@ -68,7 +68,7 @@ class CodexCLIEngine(EngineBase):
 
         try:
             events = await self._run_codex(prompt)
-            return self._parse_events(events, scene)
+            return self._parse_events(events, scene, prompt)
         except Exception:
             logger.exception("Codex CLI decision failed")
             return None
@@ -188,7 +188,8 @@ class CodexCLIEngine(EngineBase):
     # ------------------------------------------------------------------
 
     def _parse_events(
-        self, events: list[dict[str, Any]], scene: SceneType | None
+        self, events: list[dict[str, Any]], scene: SceneType | None,
+        prompt: str = "",
     ) -> ActionDecision:
         """Parse codex exec JSONL events into an ActionDecision."""
         last_act_call: Optional[dict[str, Any]] = None
@@ -250,5 +251,9 @@ class CodexCLIEngine(EngineBase):
             source="codex_cli",
             reasoning="\n".join(reasoning_parts),
             confidence=0.8,
-            extra={"total_tokens": total_tokens},
+            extra={
+                "model": self._config.resolved_model,
+                "prompt": {"combined": prompt},
+                "total_tokens": total_tokens,
+            },
         )

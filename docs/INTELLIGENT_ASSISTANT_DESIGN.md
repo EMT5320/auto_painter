@@ -1,13 +1,14 @@
 # STS2 智能助手设计文档
 
-> 版本：v0.3
-> 日期：2026-03-23
-> 状态：技术验证已通过 → 决策引擎开发中
+> 版本：v0.4
+> 日期：2026-03-24
+> 状态：数据采集管线完成 → 策略优化 + 数据积累中
 >
 > 变更历史：
 > - v0.1 初始设计
 > - v0.2 确认 Mod 可用，引入 Codex MCP 方案
 > - v0.3 MCP 连通性已验证；精简文档；标记 Agent SDK 迁移为待办
+> - v0.4 增强数据采集管线（prompt/reasoning/delta/奖励回标/SFT 导出）
 
 ---
 
@@ -43,8 +44,7 @@
 
 - 战斗/运营状态建模（依赖 Mod 实际返回数据对齐 schemas）
 - Codex system prompt + 策略知识注入
-- 规则兜底实现
-- 轨迹数据采集与评估闭环
+- ~~轨迹数据采集与评估闭环~~ → ✅ v0.4 完成
 
 ---
 
@@ -112,6 +112,30 @@
 - 导出 ONNX，本地推理
 - 混合模式：常规走小模型，关键决策 fallback 到大模型
 
+#### 数据采集管线（v0.4）
+
+每步决策自动记录：
+
+| 字段 | 用途 | 来源 |
+|------|------|------|
+| snapshot | BC 训练输入特征 | bridge |
+| action | 训练标签 | engine / rule_guard |
+| reasoning | SFT CoT 输出 | engine |
+| confidence | 质量过滤 | engine |
+| prompt (system + user) | SFT 三元组重建 | engine.extra |
+| available_actions | 约束解码 | bridge |
+| delta (hp/gold/enemies) | 即时奖励计算 | coordinator |
+| outcome (victory/death) | 回合级奖励回标 | recorder.run_end |
+
+离线数据处理（replay_loader）：
+
+| 方法 | 功能 | 输出格式 |
+|------|------|----------|
+| `build_bc_dataset()` | 行为克隆 | `{state, action}` |
+| `build_sft_dataset()` | SFT 微调 | `{messages: [{role, content}]}` |
+| `label_rewards()` | 奖励回标 | `{step, reward, discounted_return, outcome}` |
+| `export_dataset()` | 统一导出 | JSONL 文件 |
+
 ---
 
 ## 5. 模块结构
@@ -163,13 +187,14 @@ auto_painter/
 
 | 阶段 | 目标 | 验收标准 |
 |------|------|---------|
-| **A: 状态管道** | Mod HTTP API → Python 结构化状态 | 能打印战斗状态 JSON + 记录一局日志 |
-| **B: 决策引擎** | Codex MCP 全场景自动决策 | 自动完成一局游戏 + 轨迹存储 |
+| **A: 状态管道** | Mod HTTP API → Python 结构化状态 | ✅ 已完成 |
+| **B: 决策引擎** | Codex/Agent SDK/Direct 全场景自动决策 | ✅ 骨架完成，prompt 迭代中 |
+| **B+: 数据管线** | 高质量数据采集 + 离线分析 | ✅ v0.4 完成 |
 | **C: 策略优化** | prompt 迭代 + 数据积累 | 通关率 ≥ 50% + 200 局数据 |
 | **D: Agent SDK 迁移** | 程序化 LLM 接入 | 脱离 Codex CLI 独立运行 |
 | **E: 蒸馏** | 本地小模型 | 与 Codex 一致率 > 70% |
 
-当前位置：**A 已完成大部分（骨架代码就绪），B 进行中（MCP 已通，待 prompt 开发）**
+当前位置：**B+ 已完成（数据管线就绪），C 进行中（prompt 开发 + 数据积累）**
 
 ---
 

@@ -88,7 +88,7 @@ class DirectLLMEngine(EngineBase):
 
         try:
             raw = await self._call_llm(system_prompt, user_message)
-            return self._parse_response(raw)
+            return self._parse_response(raw, system_prompt, user_message)
         except Exception:
             logger.exception("DirectLLM decision failed")
             return None
@@ -189,7 +189,12 @@ class DirectLLMEngine(EngineBase):
         )
         return "\n".join(parts)
 
-    def _parse_response(self, raw: dict[str, Any]) -> ActionDecision:
+    def _parse_response(
+        self,
+        raw: dict[str, Any],
+        system_prompt: str = "",
+        user_message: str = "",
+    ) -> ActionDecision:
         action_type = raw.get("action", "noop")
         params: dict[str, Any] = {"type": action_type}
         for key in ("card_index", "target_index", "option_index", "card_id", "node_id"):
@@ -201,4 +206,8 @@ class DirectLLMEngine(EngineBase):
             source="direct_llm",
             reasoning=raw.get("reasoning", ""),
             confidence=0.7,
+            extra={
+                "model": self._config.resolved_model,
+                "prompt": {"system": system_prompt, "user": user_message},
+            },
         )

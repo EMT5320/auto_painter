@@ -133,7 +133,7 @@ class AgentSDKEngine(EngineBase):
 
         try:
             result = await Runner.run(self._agent, user_message)
-            return self._parse_result(result, scene)
+            return self._parse_result(result, scene, user_message)
         except Exception:
             logger.exception("Agent SDK decision failed")
             return None
@@ -191,7 +191,9 @@ class AgentSDKEngine(EngineBase):
             parts.append(f"HP: {run.hp}/{run.max_hp}, Gold: {run.gold}")
         return " | ".join(parts) if parts else "Read game state to begin."
 
-    def _parse_result(self, result: Any, scene: SceneType | None) -> ActionDecision:
+    def _parse_result(
+        self, result: Any, scene: SceneType | None, user_message: str = "",
+    ) -> ActionDecision:
         """
         Parse the Agent SDK RunResult into an ActionDecision.
 
@@ -203,12 +205,20 @@ class AgentSDKEngine(EngineBase):
         # Extract the last action from run items if available
         last_action = self._extract_last_action(result)
 
+        # Collect tool call summaries for training data
+        tool_calls = self._extract_tool_calls(result)
+
         return ActionDecision(
             action=last_action or {"type": "agent_managed"},
             source="agent_sdk",
             reasoning=output_text,
             confidence=0.8,
-            extra={"new_items_count": len(result.new_items) if hasattr(result, "new_items") else 0},
+            extra={
+                "model": self._config.resolved_model,
+                "prompt": {"user": user_message},
+                "tool_calls": tool_calls,
+                "new_items_count": len(result.new_items) if hasattr(result, "new_items") else 0,
+            },
         )
 
     def _extract_last_action(self, result: Any) -> Optional[dict[str, Any]]:
@@ -230,3 +240,19 @@ class AgentSDKEngine(EngineBase):
                 except (json.JSONDecodeError, AttributeError):
                     pass
         return None
+
+    def _extract_tool_calls(self, result: Any) -> list[dict[str, str]]:
+        """Extract a compact summary of tool calls for training data."""
+        if not hasattr(result, "new_items"):
+            return []
+        calls = []
+        for item in result.new_items:
+            call = getattr(item, "raw_item", None)
+            if call is None:
+                continue
+            if getattr(call, "type", None) != "function_call":
+                continue
+            name = getattr(call, "name", None)
+            if name:
+                calls.append({"tool": name})
+        return calls
