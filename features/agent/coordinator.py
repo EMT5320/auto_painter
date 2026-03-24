@@ -31,6 +31,10 @@ def _create_engine(config: EngineConfig, rule_guard: RuleGuard) -> EngineBase:
     """Factory: create the appropriate engine based on config."""
     effective = config.effective_engine_type()
 
+    if effective == EngineType.CODEX_CLI:
+        from .codex_engine import CodexCLIEngine
+        return CodexCLIEngine(config)
+
     if effective == EngineType.AGENT_SDK:
         from .sdk_engine import AgentSDKEngine
         return AgentSDKEngine(config, rule_guard=rule_guard)
@@ -152,9 +156,10 @@ class Coordinator:
         action = decision.action
         source = decision.source
 
-        # Agent SDK mode: agent already executed via MCP — skip bridge execution
+        # Agent-managed mode: Codex CLI / Agent SDK already executed via MCP
+        engine_type = self._config.effective_engine_type()
         is_agent_managed = (
-            self._config.effective_engine_type() == EngineType.AGENT_SDK
+            engine_type in (EngineType.CODEX_CLI, EngineType.AGENT_SDK)
             and action.get("type") == "agent_managed"
         )
 

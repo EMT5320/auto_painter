@@ -12,6 +12,7 @@ from typing import Optional
 
 
 class EngineType(str, Enum):
+    CODEX_CLI = "codex_cli"
     AGENT_SDK = "agent_sdk"
     DIRECT_LLM = "direct_llm"
     RULE_ONLY = "rule_only"
@@ -72,7 +73,8 @@ class EngineConfig:
         return bool(self.api_key)
 
     def effective_engine_type(self) -> EngineType:
-        """If LLM engine is requested but no API key, degrade to rule_only."""
+        """If LLM engine is requested but no API key, degrade to rule_only.
+        Codex CLI uses its own auth — no API key needed here."""
         if self.engine_type in (EngineType.AGENT_SDK, EngineType.DIRECT_LLM):
             if not self.has_api_key:
                 return EngineType.RULE_ONLY

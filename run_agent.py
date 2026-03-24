@@ -3,10 +3,10 @@ run_agent.py
 STS2 智能助手入口
 
 用法:
-  python run_agent.py                                    # 默认 agent_sdk + OpenAI
-  python run_agent.py --engine direct_llm                # 直接 LLM 调用（不走 MCP）
-  python run_agent.py --provider anthropic --api-key ...  # 使用 Anthropic
-  python run_agent.py --model gpt-4o-mini                # 指定模型
+  python run_agent.py --engine codex_cli                 # Codex CLI (订阅方案，推荐)
+  python run_agent.py --engine agent_sdk --api-key ...   # Agent SDK (API 调用)
+  python run_agent.py --engine direct_llm --api-key ...  # 直接 LLM 调用（不走 MCP）
+  python run_agent.py --engine codex_cli --model o3      # Codex CLI 指定模型
 """
 from __future__ import annotations
 
@@ -35,9 +35,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--engine",
         type=str,
-        default="agent_sdk",
+        default="codex_cli",
         choices=[e.value for e in EngineType if e != EngineType.RULE_ONLY],
-        help="Decision engine: agent_sdk (LLM via MCP) or direct_llm (LLM API only)",
+        help="Decision engine: codex_cli (Codex subscription, recommended), "
+             "agent_sdk (OpenAI API via MCP), or direct_llm (LLM API only)",
     )
     p.add_argument(
         "--provider",
@@ -119,7 +120,8 @@ async def main_loop(coordinator: Coordinator) -> None:
 async def run(args: argparse.Namespace) -> None:
     config = build_config(args)
 
-    if not config.has_api_key:
+    # Codex CLI uses its own auth (codex login), no API key needed here
+    if config.engine_type != EngineType.CODEX_CLI and not config.has_api_key:
         logger.error(
             "No API key found! Set %s env var or use --api-key",
             {
