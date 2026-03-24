@@ -111,6 +111,12 @@ class RuleGuard:
         if scene == SceneType.REST:
             return self._rest_fallback(snapshot)
 
+        if scene == SceneType.REWARD:
+            return self._reward_fallback(snapshot)
+
+        if scene == SceneType.SHOP:
+            return self._shop_fallback(snapshot)
+
         logger.debug("No fallback rule for scene: %s", scene)
         return None
 
@@ -166,6 +172,39 @@ class RuleGuard:
         if hp / max_hp < 0.60:
             return {"type": "rest"}
         return {"type": "smith"}
+
+    def _reward_fallback(self, snapshot: GameSnapshot) -> Optional[dict]:
+        """奖励降级：跳过卡牌奖励（保持牌组精简）"""
+        return {"type": "skip_reward"}
+
+    def _shop_fallback(self, snapshot: GameSnapshot) -> Optional[dict]:
+        """商店降级：直接离开（不花钱）"""
+        return {"type": "leave_shop"}
+
+    # ------------------------------------------------------------------
+    # MCP 审批支持
+    # ------------------------------------------------------------------
+
+    def validate_mcp_act(
+        self, action_name: str, kwargs: dict, snapshot: Optional[GameSnapshot]
+    ) -> Optional[str]:
+        """
+        Validate an MCP `act` tool call before execution.
+
+        Returns None if approved, or a rejection reason string.
+        """
+        if snapshot is None:
+            return None  # no snapshot available, allow through
+
+        action = {"type": action_name}
+        for key in ("card_index", "target_index", "option_index"):
+            if key in kwargs:
+                action[key] = kwargs[key]
+
+        validated = self.validate(action, snapshot)
+        if validated is None:
+            return f"Action '{action_name}' rejected: illegal in current state"
+        return None
 
     # ------------------------------------------------------------------
     # 兜底动作

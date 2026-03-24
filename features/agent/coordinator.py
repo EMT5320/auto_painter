@@ -5,21 +5,41 @@ features/agent/coordinator.py
 职责：
   1. 识别当前游戏场景类型
   2. 从 game_bridge 获取完整状态快照
-  3. 构造传递给 Codex (via MCP) 的上下文
-  4. 调用 rule_guard 校验 Codex 返回的动作
+  3. 通过决策引擎（Agent SDK / Direct LLM / Rule）获取决策
+  4. 调用 rule_guard 校验决策合法性
   5. 通过 game_bridge 执行最终动作
   6. 将决策轨迹交给 telemetry 记录
 """
 from __future__ import annotations
+
+import asyncio
 import logging
 from typing import Optional
 
 from features.game_bridge.base import GameBridgeBase
 from features.game_bridge.schemas import GameSnapshot, SceneType
 from features.telemetry.recorder import TrajectoryRecorder
+
+from .config import EngineConfig, EngineType
+from .engine import ActionDecision, EngineBase, RuleEngine
 from .rule_guard import RuleGuard
 
 logger = logging.getLogger(__name__)
+
+
+def _create_engine(config: EngineConfig, rule_guard: RuleGuard) -> EngineBase:
+    """Factory: create the appropriate engine based on config."""
+    effective = config.effective_engine_type()
+
+    if effective == EngineType.AGENT_SDK:
+        from .sdk_engine import AgentSDKEngine
+        return AgentSDKEngine(config, rule_guard=rule_guard)
+
+    if effective == EngineType.DIRECT_LLM:
+        from .direct_engine import DirectLLMEngine
+        return DirectLLMEngine(config)
+
+    return RuleEngine(rule_guard)
 
 
 class Coordinator:
@@ -27,7 +47,12 @@ class Coordinator:
     游戏助手主循环协调器。
 
     调用方只需执行 coordinator.step()，
-    Coordinator 会自动完成：感知 → 决策（Codex）→ 校验 → 执行 → 记录。
+    Coordinator 会自动完成：感知 → 决策 → 校验 → 执行 → 记录。
+
+    支持三种引擎模式:
+      - agent_sdk:  LLM 通过 MCP 自主读状态+执行（coordinator 只管生命周期）
+      - direct_llm: coordinator 读状态 → LLM 返回决策 → coordinator 执行
+      - rule_only:  纯规则决策（RuleGuard 降级）
     """
 
     def __init__(
@@ -35,23 +60,73 @@ class Coordinator:
         bridge: GameBridgeBase,
         rule_guard: RuleGuard,
         recorder: Optional[TrajectoryRecorder] = None,
+        config: Optional[EngineConfig] = None,
     ) -> None:
         self.bridge = bridge
         self.rule_guard = rule_guard
         self.recorder = recorder
+        self._config = config or EngineConfig()
+        self._engine: Optional[EngineBase] = None
+        self._engine_started = False
+
+    # ------------------------------------------------------------------
+    # 生命周期
+    # ------------------------------------------------------------------
+
+    async def start(self) -> None:
+        """Initialize the decision engine."""
+        if self._engine_started:
+            return
+        self._engine = _create_engine(self._config, self.rule_guard)
+        try:
+            await self._engine.setup()
+            self._engine_started = True
+            logger.info(
+                "Engine started: %s", self._config.effective_engine_type().value
+            )
+        except Exception:
+            logger.exception("Engine setup failed, falling back to rule_only")
+            self._engine = RuleEngine(self.rule_guard)
+            await self._engine.setup()
+            self._engine_started = True
+
+    async def stop(self) -> None:
+        """Shut down the decision engine."""
+        if self._engine is not None:
+            await self._engine.teardown()
+            self._engine = None
+            self._engine_started = False
 
     # ------------------------------------------------------------------
     # 主循环入口
     # ------------------------------------------------------------------
 
     def step(self) -> bool:
+        """Synchronous wrapper — runs async_step in an event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            # Already inside an async context — schedule as a task
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, self.async_step()).result()
+
+        return asyncio.run(self.async_step())
+
+    async def async_step(self) -> bool:
         """
-        执行一步决策循环。
+        Execute one decision cycle (async).
 
         Returns:
-            True  — 本步成功执行
-            False — bridge 不可用或场景为 UNKNOWN/GAME_OVER，循环应暂停
+            True  — step executed successfully
+            False — bridge unavailable or terminal scene
         """
+        if not self._engine_started:
+            await self.start()
+
         if not self.bridge.is_available():
             logger.warning("Bridge not available, skipping step.")
             return False
@@ -67,47 +142,76 @@ class Coordinator:
         if scene in (SceneType.GAME_OVER, SceneType.MAIN_MENU, SceneType.UNKNOWN):
             return False
 
-        # 构造 Codex 输入上下文（供 MCP 工具调用使用）
-        context = self._build_context(snapshot)
+        # --- Decision ---
+        decision = await self._get_decision(snapshot)
 
-        # TODO: 调用 Codex MCP 工具获取决策
-        # action = codex_client.decide(context)
-        action = self._fallback_decision(snapshot)
-
-        if action is None:
-            logger.warning("No action produced for scene %s", scene)
+        if decision is None:
+            logger.warning("No decision for scene %s", scene)
             return False
 
-        # 规则校验
-        validated_action = self.rule_guard.validate(action, snapshot)
-        if validated_action is None:
-            logger.warning("Action rejected by rule_guard: %s", action)
-            validated_action = self.rule_guard.safe_default(snapshot)
+        action = decision.action
+        source = decision.source
 
-        # 执行
-        result = self.bridge.perform_action(validated_action)
+        # Agent SDK mode: agent already executed via MCP — skip bridge execution
+        is_agent_managed = (
+            self._config.effective_engine_type() == EngineType.AGENT_SDK
+            and action.get("type") == "agent_managed"
+        )
 
-        # 记录轨迹
+        if is_agent_managed:
+            result = {"status": "agent_managed"}
+        else:
+            # Validate + execute (direct_llm and rule_only modes)
+            validated = self.rule_guard.validate(action, snapshot)
+            if validated is None:
+                logger.warning("Action rejected by rule_guard: %s", action)
+                validated = self.rule_guard.safe_default(snapshot)
+                source = "rule_fallback"
+            action = validated
+            result = self.bridge.perform_action(action)
+
+        # --- Record ---
         if self.recorder is not None:
             self.recorder.record(
                 snapshot=snapshot,
-                action=validated_action,
+                action=action,
                 result=result,
-                source="rule_fallback",
+                source=source,
             )
 
         return True
 
     # ------------------------------------------------------------------
-    # 内部辅助
+    # Internal
     # ------------------------------------------------------------------
+
+    async def _get_decision(
+        self, snapshot: GameSnapshot
+    ) -> Optional[ActionDecision]:
+        """Try the engine, fall back to rule_guard on failure."""
+        if self._engine is None:
+            return None
+
+        try:
+            decision = await self._engine.decide(snapshot)
+            if decision is not None:
+                return decision
+        except Exception:
+            logger.exception("Engine decision failed, falling back to rules")
+
+        # Fallback
+        fallback = self.rule_guard.decide(snapshot)
+        if fallback is None:
+            return None
+        return ActionDecision(
+            action=fallback,
+            source="rule_fallback",
+            reasoning="engine failed, rule_guard fallback",
+        )
 
     def _build_context(self, snapshot: GameSnapshot) -> dict:
         """
-        将 GameSnapshot 序列化为传给 Codex 的上下文字典。
-
-        Codex 通过 MCP 工具读取此结构，无需手动序列化——
-        此方法主要用于调试日志和非 MCP 模式的回退路径。
+        Serialize GameSnapshot for debugging / direct_llm mode.
         """
         ctx: dict = {
             "scene": snapshot.run.scene.value,
@@ -135,9 +239,3 @@ class Coordinator:
                 ]
             }
         return ctx
-
-    def _fallback_decision(self, snapshot: GameSnapshot) -> Optional[dict]:
-        """
-        Codex 不可用时的降级决策入口，委托给 rule_guard。
-        """
-        return self.rule_guard.decide(snapshot)

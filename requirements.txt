@@ -7,5 +7,11 @@ onnxruntime>=1.16.0
 customtkinter>=5.2.0
 windnd>=1.0.7
 keyboard>=0.13.5
+# 决策引擎（Agent SDK 模式需要，rule_only 不需要）
+openai-agents>=0.13.0
+openai>=1.30.0
+# 多模型支持（可选，使用非 OpenAI 模型时需要）
+# litellm>=1.40.0
+# anthropic>=0.25.0
 # 路线规划功能（可选，自实现 DFS 时无需此依赖）
 # networkx>=3.0
